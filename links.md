@@ -1,5 +1,6 @@
 # SPDC
 https://www.youtube.com/watch?v=xSAoWrD03FQ
+https://www.youtube.com/watch?v=SqKkwTA3Xms
 # Quantum Communications Playlist 
 https://www.youtube.com/playlist?list=PLCTGenrx1-SOC-b98RCC1uEGI-Sc-N3C-
 # Types of SPDC
