@@ -36,7 +36,7 @@ T: float = 80.0  # Crystal temperature [°C]
 # Signal wavelength sweep range
 LAMBDA_S_MIN: float = (
     LAMBDA_P * 1.05
-)  # 5 % above pump — avoids singularity at λ_s → λ_p
+)  # 5 % above pump — avoids singularity when lim λ_s --> λ_p
 LAMBDA_S_MAX: float = 1500e-9  # [m]
 N_SWEEP: int = 1000
 
