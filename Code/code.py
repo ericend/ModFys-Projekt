@@ -16,9 +16,13 @@ The periodic poling provides a reciprocal lattice vector G = 2*pi/Λ which gives
 the momentum condition: k_p = k_s + k_i + G (quasi-phase-matching).
 """
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import brentq
+
+SCRIPT_DIR = Path(__file__).parent
 
 # ---------------------------------------------------------------------------
 # Physical constants / device parameters
@@ -32,7 +36,7 @@ T: float = 80.0  # Crystal temperature [°C]
 # Signal wavelength sweep range
 LAMBDA_S_MIN: float = (
     LAMBDA_P * 1.05
-)  # 5 % above pump to stay clear of the singularity when λ_s --> λ_p
+)  # 5 % above pump — avoids singularity at λ_s → λ_p
 LAMBDA_S_MAX: float = 1500e-9  # [m]
 N_SWEEP: int = 1000
 
@@ -52,9 +56,8 @@ def get_lambda_i(lambda_p: float, lambda_s: float) -> float:
 
     Returns:
         Idler wavelength [m].
-        Note:
-        Negative or very large values indicate an
-        unphysical point (signal shorter than pump).
+        Note: negative or very large values indicate an unphysical point
+        (signal shorter than pump).
     """
     return (lambda_p * lambda_s) / (lambda_s - lambda_p)
 
@@ -65,7 +68,7 @@ def k_norm(wavelength: float, ref_index: float) -> float:
 
     Args:
         wavelength: Free-space wavelength [m].
-        ref_index:  Refractive index of the medium (dimensionless).
+        ref_index:  Refractive index (dimensionless).
 
     Returns:
         Wave-vector magnitude [rad/m].
@@ -73,41 +76,76 @@ def k_norm(wavelength: float, ref_index: float) -> float:
     return (2 * np.pi * ref_index) / wavelength
 
 
-def sellmeier(wavelength_m: float, T: float) -> float:
+def sellmeier_is_valid(wavelength_m: float, T: float) -> bool:
     """
+    Return True only if the Sellmeier equation produces a physically
+    meaningful result at this wavelength and temperature.
 
-    Temperature-dependent Sellmeier equation
+    Three conditions must ALL be satisfied:
+      1. Wavelength is inside MgO:LiNbO3's nominal transparency window
+         (350 nm – 5200 nm) — the standard experimental range for this
+         Sellmeier parameterisation.
+      2. The computed n² is strictly greater than 1 — necessary for a
+         real refractive index that exceeds vacuum.
+      3. The wavelength is not straddling either Sellmeier pole.
+         The UV pole is at λ_UV = sqrt(C_eff²) ≈ 212 nm,
+         the IR pole is at λ_IR = F             ≈ 7454 nm.
+         Both are well outside the transparency window so condition 1
+         already excludes them; condition 3 is an explicit guard for any
+         future use outside that window.
 
     Args:
         wavelength_m: Free-space wavelength [m].
         T:            Crystal temperature [°C].
 
     Returns:
-        refractive index n_e
+        True if the index is physically meaningful; False otherwise.
     """
-    lam = wavelength_m * 1e6  # Convert metres --> micrometres
-
-    # Sellmeier coefficients ( Table 1)
-    A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
-
-    # Temperature-dependent corrections to poles B and C
-    T_K = T + 273.15  # Convert to Kelvin
-    bT = 4.23526e-8 * T_K**2
-    cT = -6.53227e-8 * T_K**2
-
-    n_sq = A + (B + bT) / (lam**2 - (C + cT) ** 2) + E / (lam**2 - F**2) + D * lam**2
-    return np.sqrt(n_sq)
-
-
-def sellmeier_is_valid(wavelength_m: float, T: float) -> bool:
-    """Return False if the Sellmeier equation produces an unphysical result."""
+    LAMBDA_UV_M: float = 350e-9
+    LAMBDA_IR_M: float = 5200e-9
+    if not (LAMBDA_UV_M <= wavelength_m <= LAMBDA_IR_M):
+        return False
     lam = wavelength_m * 1e6
     A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
     T_K = T + 273.15
     bT = 4.23526e-8 * T_K**2
     cT = -6.53227e-8 * T_K**2
-    n_sq = A + (B + bT) / (lam**2 - (C + cT) ** 2) + E / (lam**2 - F**2) + D * lam**2
-    return n_sq > 1  # physically meaningful refractive index
+    C_eff = C + cT
+    uv_denom = lam**2 - C_eff**2
+    ir_denom = lam**2 - F**2
+    if abs(uv_denom) < 1e-10 or abs(ir_denom) < 1e-10:
+        return False
+    n_sq = A + (B + bT) / uv_denom + E / ir_denom + D * lam**2
+    return n_sq > 1.0
+
+
+def sellmeier(wavelength_m: float, T: float) -> float:
+    """
+    Temperature-dependent Sellmeier equation for MgO:LiNbO3 (extraordinary axis).
+
+    Args:
+        wavelength_m: Free-space wavelength [m].
+        T:            Crystal temperature [°C].
+
+    Returns:
+        Extraordinary refractive index n_e.
+
+    Raises:
+        ValueError if the wavelength is outside the valid range (350–5200 nm).
+    """
+    if not sellmeier_is_valid(wavelength_m, T):
+        raise ValueError(
+            f"Sellmeier equation invalid at λ = {wavelength_m * 1e9:.1f} nm, T = {T}°C. "
+            f"Valid range: 350–5200 nm."
+        )
+    lam = wavelength_m * 1e6
+    A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
+    T_K = T + 273.15
+    bT = 4.23526e-8 * T_K**2
+    cT = -6.53227e-8 * T_K**2
+    C_eff = C + cT
+    n_sq = A + (B + bT) / (lam**2 - C_eff**2) + E / (lam**2 - F**2) + D * lam**2
+    return np.sqrt(n_sq)
 
 
 def wave_vectors(
@@ -115,8 +153,6 @@ def wave_vectors(
 ) -> tuple[float, float, float]:
     """
     Compute wave-vector magnitudes for pump, signal, and idler.
-
-    Evaluates the Sellmeier equation at each wavelength, then converts to k.
 
     Args:
         lambda_p: Pump wavelength [m].
@@ -127,15 +163,11 @@ def wave_vectors(
     Returns:
         Tuple (kp, ks, ki) of wave-vector magnitudes [rad/m].
     """
-    n_p = sellmeier(lambda_p, T)
-    n_s = sellmeier(lambda_s, T)
-    n_i = sellmeier(lambda_i, T)
-
-    kp = k_norm(lambda_p, n_p)
-    ks = k_norm(lambda_s, n_s)
-    ki = k_norm(lambda_i, n_i)
-
-    return kp, ks, ki
+    return (
+        k_norm(lambda_p, sellmeier(lambda_p, T)),
+        k_norm(lambda_s, sellmeier(lambda_s, T)),
+        k_norm(lambda_i, sellmeier(lambda_i, T)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +179,7 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
     """
     QPM residual for a given signal emission angle.
 
-    The idler angle θ_i is derived from momentum conservation:
+    The idler angle θ_i is derived from transverse momentum conservation:
         k_s * sin θ_s = k_i * sin θ_i  ==>  θ_i = arcsin((k_s/k_i) * sin θ_s)
 
     Phase matching is satisfied when the residual equals zero:
@@ -161,17 +193,13 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
         G:       Reciprocal lattice vector of periodic poling [rad/m].
 
     Returns:
-        Phase-mismatch residual [rad/m], or ``nan`` if the implied idler
+        Phase-mismatch residual [rad/m], or nan if the implied idler
         angle is non-physical (|sin θ_i| > 1).
     """
-    # momentum conservation -> idler angle
     arg = (ks / ki) * np.sin(theta_s)
     if np.abs(arg) > 1:
-        # No real idler angle exists for this signal angle
         return np.nan
     theta_i = np.arcsin(arg)
-
-    # momentum residual
     return ks * np.cos(theta_s) + ki * np.cos(theta_i) + G - kp
 
 
@@ -182,16 +210,12 @@ def collinear_pm(
     G: float = G,
 ) -> float:
     """
-    Collinear QPM residual: mismatch when all beams propagate along the pump axis.
+    Collinear QPM residual (θ_s = θ_i = 0): k_p - k_s - k_i - G = 0.
 
-    Assumes θ_s = θ_i = 0, so the condition reduces to:
-        k_p - k_s - k_i - G = 0
-
-    Pass this function to a root-finder to locate the collinear phase-matching
-    signal wavelength.
+    Pass to a root-finder to locate the collinear phase-matching signal wavelength.
 
     Args:
-        lambda_s: Signal wavelength [m] (the free variable for the root-finder).
+        lambda_s: Signal wavelength [m] (free variable for the root-finder).
         lambda_p: Pump wavelength [m].
         T:        Crystal temperature [°C].
         G:        Reciprocal lattice vector [rad/m].
@@ -202,6 +226,19 @@ def collinear_pm(
     lambda_i = get_lambda_i(lambda_p, lambda_s)
     kp, ks, ki = wave_vectors(lambda_p, lambda_s, lambda_i, T)
     return kp - ks - ki - G
+
+
+def collinear_pm_bracket(lambda_p: float = LAMBDA_P) -> tuple[float, float]:
+    """
+    Return a (lo, hi) bracket for the collinear root-finder such that both
+    signal AND idler wavelengths are inside the Sellmeier validity window.
+
+    The constraint is: λ_i = λ_p·λ_s/(λ_s−λ_p) ≤ 5200 nm
+    Solving for λ_s gives: λ_s ≥ λ_p·5200/(5200−λ_p)
+    """
+    li_max = 5200e-9
+    ls_lo = lambda_p * li_max / (li_max - lambda_p) * 1.001  # nudge just inside
+    return ls_lo, LAMBDA_S_MAX
 
 
 # ---------------------------------------------------------------------------
@@ -220,160 +257,232 @@ def run_sweep(
     """
     Sweep signal wavelengths and find the phase-matched emission angles.
 
-    For each signal wavelength the function:
+    For each signal wavelength:
     1. Derives the idler wavelength from energy conservation.
-    2. Computes wave vectors via the Sellmeier equation. |k| = 2 * pi * n(w) / lambda
-    3. Checks whether a root of ``phase_mismatch`` exists in [0, θ_max].
-    4. Solves with Brent's method and records the result.
+    2. Validates both wavelengths against the Sellmeier transparency window.
+    3. Computes wave vectors via the Sellmeier equation.
+    4. Checks whether a root of phase_mismatch exists in [0, θ_max].
+    5. Solves with Brent's method and records the result.
 
     Args:
-        lambda_p:    Pump wavelength [m].
-        T:           Crystal temperature [°C].
-        G:           Reciprocal lattice vector [rad/m].
+        lambda_p:     Pump wavelength [m].
+        T:            Crystal temperature [°C].
+        G:            Reciprocal lattice vector [rad/m].
         lambda_s_min: Start of signal sweep [m].
         lambda_s_max: End of signal sweep [m].
-        n_sweep:     Number of wavelength points.
+        n_sweep:      Number of wavelength points.
 
     Returns:
-        List of dicts with keys ``lambda_s``, ``lambda_i``, ``theta_s``,
-        ``theta_i`` for every wavelength where phase matching was found.
+        List of dicts with keys lambda_s, lambda_i, theta_s, theta_i, n_s, n_i
+        for every wavelength where phase matching was found.
     """
-    lambda_s_sweep = np.linspace(lambda_s_min, lambda_s_max, n_sweep)
     results = []
-
-    for ls in lambda_s_sweep:
+    for ls in np.linspace(lambda_s_min, lambda_s_max, n_sweep):
         li = get_lambda_i(lambda_p, ls)
-
-        # Skip unphysical idler wavelengths (negative or beyond mid-IR)
-        if li <= 0 or li > 5e-6:
+        if not (sellmeier_is_valid(ls, T) and sellmeier_is_valid(li, T)):
             continue
-
         kp, ks, ki = wave_vectors(lambda_p, ls, li, T)
-
-        # Upper bound on θ_s: transverse conservation breaks down beyond
-        # arcsin(k_i / k_s) when k_s > k_i (signal has shorter λ than idler)
         theta_max = np.arcsin(min(1.0, ki / ks)) if ks >= ki else np.pi / 2
-        bracket_high = theta_max * 0.9999  # Stay just inside the valid range
-
-        # Evaluate residual at bracket edges
+        bracket_high = theta_max * 0.9999
         f_low = phase_mismatch(0, ks, ki, kp, G)
         f_high = phase_mismatch(bracket_high, ks, ki, kp, G)
-
-        # Skip if either endpoint is non-physical or no sign change (no root)
-        if np.isnan(f_low) or np.isnan(f_high):
+        if np.isnan(f_low) or np.isnan(f_high) or f_low * f_high > 0:
             continue
-        if f_low * f_high > 0:
-            continue
-
         try:
-            # Brent's method: guaranteed convergence given a sign change
             theta_s_sol = brentq(phase_mismatch, 0, bracket_high, args=(ks, ki, kp, G))
-            # Recover idler angle from transverse momentum conservation
             theta_i_sol = np.arcsin((ks / ki) * np.sin(theta_s_sol))
-
             results.append(
                 {
                     "lambda_s": ls,
                     "lambda_i": li,
                     "theta_s": np.degrees(theta_s_sol),
                     "theta_i": np.degrees(theta_i_sol),
-                    "n_s": sellmeier(ls, T),  # ← add
-                    "n_i": sellmeier(li, T),  # ← add
+                    "n_s": sellmeier(ls, T),
+                    "n_i": sellmeier(li, T),
                 }
             )
         except ValueError:
-            # brentq can still fail on edge cases; skip gracefully
             continue
-
     return results
 
 
 # [PLOT_START]
 
+plt.style.use("seaborn-v0_8-whitegrid")
+
+SMALL, MED, BIG = 11, 13, 14
+plt.rcParams.update(
+    {
+        "font.family": "serif",
+        "font.size": MED,
+        "axes.titlesize": BIG,
+        "axes.labelsize": MED,
+        "xtick.labelsize": SMALL,
+        "ytick.labelsize": SMALL,
+        "legend.fontsize": SMALL,
+        "figure.dpi": 300,
+    }
+)
+
+TEAL = "#002fff"
+ORANGE = "#c00000"
+
 
 def plot_results(results: list[dict], ls_collinear: float) -> None:
     """
-    Plot signal and idler emission angles vs wavelength.
+    Plot signal and idler emission angles vs wavelength as separate figures.
 
-    Marks the collinear phase-matching point (θ = 0) on the signal plot.
+    Marks the collinear phase-matching point (θ = 0) on both plots.
 
     Args:
-        results:       Output from ``run_sweep``.
+        results:       Output from run_sweep.
         ls_collinear:  Collinear phase-matching signal wavelength [m].
     """
-    lambda_s_nm = [r["lambda_s"] * 1e9 for r in results]
-    lambda_i_nm = [r["lambda_i"] * 1e9 for r in results]
-    theta_s_deg = [r["theta_s"] for r in results]
-    theta_i_deg = [r["theta_i"] for r in results]
+    ls_nm = np.array([r["lambda_s"] * 1e9 for r in results])
+    li_nm = np.array([r["lambda_i"] * 1e9 for r in results])
+    ts_deg = np.array([r["theta_s"] for r in results])
+    ti_deg = np.array([r["theta_i"] for r in results])
+    li_col_nm = get_lambda_i(LAMBDA_P, ls_collinear) * 1e9
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    params = (
+        f"$\\lambda_p$ = {LAMBDA_P * 1e9:.0f} nm\n"
+        f"$\\Lambda$ = {POLING_PERIOD * 1e6:.1f} µm\n"
+        f"$T$ = {T:.0f} °C"
+    )
 
-    # Signal angle curve
-    ax1.plot(lambda_s_nm, theta_s_deg)
-    ax1.scatter(
+    # ── Signal plot ──────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+
+    ax.plot(ls_nm, ts_deg, color=TEAL, lw=1.8, zorder=3)
+    # ax.fill_between(ls_nm, ts_deg, alpha=0.08, color=TEAL, zorder=2)
+    ax.scatter(
         ls_collinear * 1e9,
         0,
-        label=f"Collinear: {ls_collinear * 1e9:.1f} nm",
-        zorder=5,
+        color=TEAL,
+        edgecolors="white",
+        linewidths=1.4,
+        s=80,
+        zorder=1,
+        label=f"Collinear:  $\\lambda_s$ = {ls_collinear * 1e9:.1f} nm,  $\\theta_s$ = 0°",
     )
-    ax1.set_xlabel("λ_s (nm)")
-    ax1.set_ylabel("θ_s (degrees)")
-    ax1.set_title("Signal emission angle vs wavelength")
-    ax1.legend()
-    ax1.grid(True)
+    ax.annotate(
+        f"{ls_collinear * 1e9:.1f} nm",
+        xy=(ls_collinear * 1e9, 0),
+        xytext=(ls_collinear * 1e9 - 55, 0.55),
+        fontsize=SMALL,
+        color=TEAL,
+        arrowprops=dict(arrowstyle="->", color=TEAL, lw=1.0),
+    )
+    ax.text(
+        0.97,
+        0.97,
+        params,
+        transform=ax.transAxes,
+        fontsize=SMALL,
+        color="0",
+        va="top",
+        ha="right",
+        bbox=dict(
+            boxstyle="round,pad=0.35",
+            facecolor="white",
+            edgecolor="0.82",
+            linewidth=0.8,
+        ),
+    )
+    ax.set_xlabel("Signal wavelength  $\\lambda_s$  (nm)")
+    ax.set_ylabel("Signal emission angle  $\\theta_s$")
+    ax.set_title("QPM Signal Emission Angle")
+    ax.legend()
+    ax.grid(alpha=0.5, linestyle="--")
+    fig.tight_layout()
+    fig.savefig(SCRIPT_DIR / "qpm_signal.png", dpi=300, bbox_inches="tight")
 
-    # Idler angle curve
-    ax2.plot(lambda_i_nm, theta_i_deg, color="orange")
+    # plt.show()
 
-    ax2.scatter(
-        get_lambda_i(LAMBDA_P, ls_collinear) * 1e9,  # = 1515.57 nm
+    # ── Idler plot ───────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+
+    ax.plot(li_nm, ti_deg, color=ORANGE, lw=1.8, zorder=3)
+    # ax.fill_between(li_nm, ti_deg, alpha=0.08, color=ORANGE, zorder=2)
+    ax.scatter(
+        li_col_nm,
         0,
-        label=f"Collinear: {get_lambda_i(LAMBDA_P, ls_collinear) * 1e9:.1f} nm",
-        zorder=5,
+        color=ORANGE,
+        edgecolors="white",
+        linewidths=1.4,
+        s=80,
+        zorder=1,
+        label=f"Collinear:  $\\lambda_i$ = {li_col_nm:.1f} nm,  $\\theta_i$ = 0°",
     )
-    ax2.legend()
-    ax2.set_xlabel("λ_i (nm)")
-    ax2.set_ylabel("θ_i (degrees)")
-    ax2.set_title("Idler emission angle vs wavelength")
-    ax2.grid(True)
+    ax.annotate(
+        f"{li_col_nm:.1f} nm",
+        xy=(li_col_nm, 0),
+        xytext=(li_col_nm + 200, 3.5),
+        fontsize=SMALL,
+        color="black",
+        arrowprops=dict(arrowstyle="->", color=ORANGE, lw=1.0),
+    )
+    ax.text(
+        0.97,
+        0.97,
+        params,
+        transform=ax.transAxes,
+        fontsize=SMALL,
+        color="0",
+        va="top",
+        ha="right",
+        bbox=dict(
+            boxstyle="round,pad=0.35",
+            facecolor="white",
+            edgecolor="0.82",
+            linewidth=0.8,
+        ),
+    )
+    ax.set_xlabel("Idler wavelength  $\\lambda_i$  (nm)")
+    ax.set_ylabel("Idler emission angle  $\\theta_i$")
+    ax.set_title("QPM Idler Emission Angle")
+    ax.legend()
+    ax.grid(alpha=0.5, linestyle="--")
+    fig.tight_layout()
+    fig.savefig(SCRIPT_DIR / "qpm_idler.png", dpi=300, bbox_inches="tight")
 
-    plt.tight_layout()
-    plt.show()
+    # plt.show()
 
 
 # [PLOT_END]
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
     """Run the QPM sweep, print a sanity-check table, and show the plots."""
-
     results = run_sweep()
 
-    # Print ~8 evenly-spaced rows; step size adapts to however many solutions were found
     step = max(1, len(results) // 8)
     print(
-        rf"{'λ_s (nm)':>10}  {'λ_i (nm)':>10}  {'n_s':>7}  {'n_i':>7}  {'θ_s (°)':>9}  {'θ_i (°)':>9}"
+        f"{'λ_s (nm)':>10}  {'λ_i (nm)':>10}  {'n_s':>7}  {'n_i':>7}  {'θ_s (°)':>9}  {'θ_i (°)':>9}"
     )
     print("─" * 64)
     for r in results[::step]:
         print(
-            rf"{r['lambda_s'] * 1e9:10.1f}  "
-            rf"{r['lambda_i'] * 1e9:10.1f}  "
-            rf"{r['n_s']:7.5f}  "
-            rf"{r['n_i']:7.5f}  "
-            rf"{r['theta_s']:9.3f}  "
-            rf"{r['theta_i']:9.3f}"
+            f"{r['lambda_s'] * 1e9:10.1f}  "
+            f"{r['lambda_i'] * 1e9:10.1f}  "
+            f"{r['n_s']:7.5f}  "
+            f"{r['n_i']:7.5f}  "
+            f"{r['theta_s']:9.3f}  "
+            f"{r['theta_i']:9.3f}"
         )
 
-    # Find the collinear phase-matching wavelength (θ_s = θ_i = 0)
-    ls_collinear = brentq(
-        collinear_pm,
-        LAMBDA_S_MIN,
-        LAMBDA_S_MAX,
-        args=(LAMBDA_P, T, G),
-    )
+    ls_lo, ls_hi = collinear_pm_bracket()
+    ls_collinear = brentq(collinear_pm, ls_lo, ls_hi, args=(LAMBDA_P, T, G))
+    li_collinear = get_lambda_i(LAMBDA_P, ls_collinear)
     print(
-        f"\nCollinear phase-matching wavelength: signal: {ls_collinear * 1e9:.2f} nm, idler: {get_lambda_i(LAMBDA_P, ls_collinear) * 1e9:.2f} nm"
+        f"\nCollinear phase-matching wavelength: "
+        f"signal: {ls_collinear * 1e9:.2f} nm, "
+        f"idler: {li_collinear * 1e9:.2f} nm"
     )
 
     plot_results(results, ls_collinear)
