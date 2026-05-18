@@ -201,7 +201,7 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
     arg = (ks / ki) * np.sin(theta_s)
     if np.abs(arg) > 1:
         return np.nan
-    # arg = np.clip(arg, -1, 1) # Use to stabilize numerical instability
+    # arg = np.clip(arg, -1, 1) # Use to stabilize numerical instabilities
     theta_i = np.arcsin(arg)
     return ks * np.cos(theta_s) + ki * np.cos(theta_i) + G - kp
 
@@ -235,12 +235,8 @@ def collinear_pm_bracket(lambda_p: float = LAMBDA_P) -> tuple[float, float]:
     """
     Return a (lo, hi) bracket for the collinear root-finder such that both
     signal AND idler wavelengths are inside the Sellmeier validity window.
-
-    The constraint is: λ_i = λ_p·λ_s/(λ_s−λ_p) ≤ 5200 nm
-    Solving for λ_s gives: λ_s ≥ λ_p·5200/(5200−λ_p)
     """
-    li_max = 5200e-9
-    ls_lo = lambda_p * li_max / (li_max - lambda_p) * 1.001  # nudge just inside
+    ls_lo = lambda_p * LAMBDA_I_MAX / (LAMBDA_I_MAX - lambda_p) * 1.001
     return ls_lo, LAMBDA_S_MAX
 
 
@@ -391,7 +387,7 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
         ),
     )
     ax.set_xlabel("Signal wavelength  $\\lambda_s$  (nm)")
-    ax.set_ylabel("Signal emission angle  $\\theta_s$")
+    ax.set_ylabel("Signal emission angle  $\\theta_s (°)$")
     ax.set_title("QPM Signal Emission Angle")
     ax.legend()
     ax.grid(alpha=0.5, linestyle="--")
@@ -440,7 +436,7 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
         ),
     )
     ax.set_xlabel("Idler wavelength  $\\lambda_i$  (nm)")
-    ax.set_ylabel("Idler emission angle  $\\theta_i$")
+    ax.set_ylabel("Idler emission angle  $\\theta_i (°)$")
     ax.set_title("QPM Idler Emission Angle")
     ax.legend(loc="lower right")
     ax.grid(alpha=0.5, linestyle="--")
@@ -461,6 +457,16 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
 def main() -> None:
     """Run the QPM sweep, print a sanity-check table, and show the plots."""
     results = run_sweep()
+
+    # Find the phase-matched pair at θ_s = 1°
+    TARGET_THETA_S = 1.0  # degrees
+    closest = min(results, key=lambda r: abs(r["theta_s"] - TARGET_THETA_S))
+    print(
+        f"\nAt θ_s = {TARGET_THETA_S}°:  "
+        f"λ_s = {closest['lambda_s'] * 1e9:.2f} nm,  "
+        f"λ_i = {closest['lambda_i'] * 1e9:.2f} nm,  "
+        f"θ_i = {closest['theta_i']:.3f}°"
+    )
 
     step = max(1, len(results) // 8)
     print(
