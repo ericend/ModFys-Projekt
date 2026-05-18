@@ -10,10 +10,16 @@ G: float = 2 * np.pi / 8.5e-6  # reciprocal lattice vector
 
 
 def get_lambda_i(lambda_p: float, lambda_s: float) -> float:
+    """
+    Calculate wavelength for idler-photon from energy conservation principle and E = hf
+    """
     return (lambda_p * lambda_s) / (lambda_s - lambda_p)
 
 
 def k_norm(wavelength: float, ref_index: float) -> float:
+    """
+    Calculate norm of wave vector as a function of wavelength and medium refractive index
+    """
     return (2 * np.pi * ref_index) / wavelength
 
 
@@ -27,6 +33,28 @@ def sellmeier(wavelength_m: float, T: float) -> float:
 
 
 def f(theta_s: float, ks: float, ki: float, kp: float, G: float) -> float:
+    """
+    Evaluate the quasi-phase-matching residual for parametric down-conversion.
+
+    Computes the momentum conservation mismatch along the optical axis given a
+    candidate signal photon angle. The idler angle is derived from
+    momentum conservation, and the residual is zero when
+    all three wave-vectors and the reciprocal lattice vector G satisfy the
+    phase-matching condition:
+
+        ks·cos(θ_s) + ki·cos(θ_i) + G - kp = 0
+
+    Args:
+        theta_s: Signal emission angle with respect to the pump axis (radians).
+        ks:      Signal wave-vector magnitude (rad/m), k = 2π·n / λ.
+        ki:      Idler wave-vector magnitude (rad/m).
+        kp:      Pump wave-vector magnitude (rad/m).
+        G:       Reciprocal lattice vector of the periodic poling structure (rad/m).
+
+    Returns:
+        Residual of the phase-matching condition (rad/m), or
+        ``nan`` if the implied idler angle is non-physical (|sin θ_i| > 1).
+    """
     # check arcsin argument is valid
     arg = (ks / ki) * np.sin(theta_s)
     if np.abs(arg) > 1:
@@ -105,6 +133,26 @@ ax2.grid(True)
 
 
 def collinear_pm(ls):
+    """
+    Evaluate the collinear quasi-phase-matching residual for a given signal wavelength.
+
+    Computes the wave-vector mismatch under the assumption that signal, and
+    idler angles are propagating along optical axis: (θ_s = θ_i = 0).
+    The residual is zero at the signal wavelength where perfect collinear phase-matching is achieved:
+
+        kp - ks - ki - G = 0
+
+    The idler wavelength is derived from energy conservation, and refractive
+    indices are evaluated via the Sellmeier equation at temperature T.
+
+    Args:
+        ls: Signal wavelength (m).
+
+    Returns:
+        Residual of the collinear phase-matching condition (rad/m). Pass this
+        function to a root-finder (e.g. ``brentq``) to locate the collinear
+        phase-matching wavelength.
+    """
     li = get_lambda_i(lambda_p, ls)
 
     n_p = sellmeier(lambda_p, T)
