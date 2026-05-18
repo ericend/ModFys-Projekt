@@ -1,5 +1,5 @@
 """
-Quasi-phase-matched (QPM) parametric down-conversion in MgO:LiNbO₃.
+Quasi-phase-matched (QPM) parametric down-conversion in 1mol% MgO-doped nearly stoichiometric lithium tantalate.
 
 Sweeps over signal wavelengths and, for each, solves the non-collinear
 phase-matching condition to find the signal and idler emission angles.
@@ -9,9 +9,12 @@ Physical process
 ----------------
 A pump photon (λ_p) spontaneously splits into a signal (λ_s) and idler (λ_i)
 photon pair subject to:
+
   - Energy conservation : 1/λ_p = 1/λ_s + 1/λ_i
+
   - Momentum conservation: k_p = k_s * cos θ_s + k_i * cos θ_i  (longitudinal)
                            0   = k_s * sin θ_s - k_i * sin θ_i  (transverse)
+
 The periodic poling provides a reciprocal lattice vector G = 2*pi/Λ which gives
 the momentum condition: k_p = k_s + k_i + G (quasi-phase-matching).
 """
@@ -25,21 +28,66 @@ from scipy.optimize import brentq
 SCRIPT_DIR = Path(__file__).parent
 
 # ---------------------------------------------------------------------------
-# Physical constants / device parameters
+# Physical constants /  parameters
 # ---------------------------------------------------------------------------
 
 LAMBDA_P: float = 532e-9  # Pump wavelength [m]
 POLING_PERIOD: float = 8.5e-6  # Poling period [m]
 G: float = 2 * np.pi / POLING_PERIOD  # Reciprocal lattice vector [rad/m]
-T: float = 80.0  # Crystal temperature [°C]
+T: float = 80.0  # Crystal temperature [C]
 
-# Signal wavelength sweep range
-LAMBDA_S_MIN: float = (
-    LAMBDA_P * 1.05
-)  # 5 % above pump — avoids singularity when lim λ_s --> λ_p
-LAMBDA_S_MAX: float = 1500e-9  # [m]
+
+# ---------------------------------------------------------------------------
+# Find Sellmeier boundaries
+# ---------------------------------------------------------------------------
+
+
+def sellmeier_validity_check(scanspace: np.ndarray) -> np.ndarray:
+    """
+    Evaluate n² across a wavelength scanspace (in µm).
+    Used to identify the valid range of the Sellmeier equation.
+    """
+    x = scanspace
+    A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
+    T_K = T + 273.15
+    bT = 4.23526e-8 * T_K**2
+    cT = -6.53227e-8 * T_K**2
+    C_eff = C + cT
+    return A + (B + bT) / (x**2 - C_eff**2) + E / (x**2 - F**2) + D * x**2
+
+
+# Scan Sellmeier over a wide range to find unphysical regions
+refractive_index_scanspace = np.linspace(0.01, 8.0, 100_000)  # µm
+
+vals = sellmeier_validity_check(refractive_index_scanspace)
+
+# n²=0 crossings: formula returns imaginary n (complete breakdown)
+zero_indices = np.where(np.diff(np.sign(vals)))[0]
+crossings_zero_nm = refractive_index_scanspace[zero_indices] * 1e3
+
+# n²=1 crossings: n drops below vacuum (physically meaningless for a dielectric)
+one_indices = np.where(np.diff(np.sign(vals - 1)))[0]
+crossings_one_nm = refractive_index_scanspace[one_indices] * 1e3
+
+print(f"n²=0 crossings: {crossings_zero_nm} nm")
+print(f"n²=1 crossings: {crossings_one_nm} nm")
+print(
+    f"Valid window (n² > 1): {crossings_one_nm[1]:.0f} nm  -->  {crossings_one_nm[2]:.0f} nm"
+)
+
+
+# Signal wavelength sweep range.
+# LAMBDA_S_MIN is derived from the IR validity limit of the Sellmeier equation
+# (n² > 1 up to ~7384 nm at 80°C). Energy conservation links signal and idler:
+#   λ_i = λ_p · λ_s / (λ_s − λ_p)  ≤  LAMBDA_I_MAX
+#   → λ_s ≥ λ_p · LAMBDA_I_MAX / (LAMBDA_I_MAX − λ_p)
+# This guarantees the idler never leaves the valid Sellmeier window.
+LAMBDA_I_MAX: float = 7384e-9  # IR validity cutoff [m]
+LAMBDA_S_MIN: float = LAMBDA_P * LAMBDA_I_MAX / (LAMBDA_I_MAX - LAMBDA_P) * 1.001
+LAMBDA_S_MAX: float = 1500e-9
+
+# number of
 N_SWEEP: int = 1000
-
 
 # ---------------------------------------------------------------------------
 # Core physics functions
@@ -64,7 +112,7 @@ def get_lambda_i(lambda_p: float, lambda_s: float) -> float:
 
 def k_norm(wavelength: float, ref_index: float) -> float:
     """
-    Wave-vector magnitude k = 2π·n / λ inside a medium.
+    Wave-vector magnitude k = 2π * n / λ inside a medium.
 
     Args:
         wavelength: Free-space wavelength [m].
@@ -73,71 +121,25 @@ def k_norm(wavelength: float, ref_index: float) -> float:
     Returns:
         Wave-vector magnitude [rad/m].
     """
-    return (2 * np.pi * ref_index) / wavelength
-
-
-def sellmeier_is_valid(wavelength_m: float, T: float) -> bool:
-    """
-    Return True only if the Sellmeier equation produces a physically
-    meaningful result at this wavelength and temperature.
-
-    Three conditions must ALL be satisfied:
-      1. Wavelength is inside MgO:LiNbO3's nominal transparency window
-         (350 nm – 5200 nm) — the standard experimental range for this
-         Sellmeier parameterisation.
-      2. The computed n² is strictly greater than 1 — necessary for a
-         real refractive index that exceeds vacuum.
-      3. The wavelength is not straddling either Sellmeier pole.
-         The UV pole is at λ_UV = sqrt(C_eff²) ≈ 212 nm,
-         the IR pole is at λ_IR = F             ≈ 7454 nm.
-         Both are well outside the transparency window so condition 1
-         already excludes them; condition 3 is an explicit guard for any
-         future use outside that window.
-
-    Args:
-        wavelength_m: Free-space wavelength [m].
-        T:            Crystal temperature [°C].
-
-    Returns:
-        True if the index is physically meaningful; False otherwise.
-    """
-    LAMBDA_UV_M: float = 350e-9
-    LAMBDA_IR_M: float = 5200e-9
-    if not (LAMBDA_UV_M <= wavelength_m <= LAMBDA_IR_M):
-        return False
-    lam = wavelength_m * 1e6
-    A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
-    T_K = T + 273.15
-    bT = 4.23526e-8 * T_K**2
-    cT = -6.53227e-8 * T_K**2
-    C_eff = C + cT
-    uv_denom = lam**2 - C_eff**2
-    ir_denom = lam**2 - F**2
-    if abs(uv_denom) < 1e-10 or abs(ir_denom) < 1e-10:
-        return False
-    n_sq = A + (B + bT) / uv_denom + E / ir_denom + D * lam**2
-    return n_sq > 1.0
+    mag: float = (2 * np.pi * ref_index) / wavelength
+    if mag <= 0:
+        raise ValueError("Invalid wavevector")
+    return mag
 
 
 def sellmeier(wavelength_m: float, T: float) -> float:
     """
-    Temperature-dependent Sellmeier equation for MgO:LiNbO3 (extraordinary axis).
+    Temperature-dependent Sellmeier equation for 1mol% MgO-doped nearly stoichiometric lithium tantalate.
 
     Args:
         wavelength_m: Free-space wavelength [m].
-        T:            Crystal temperature [°C].
+        T:            Crystal temperature [C].
 
     Returns:
-        Extraordinary refractive index n_e.
+        refractive index n_e.
 
-    Raises:
-        ValueError if the wavelength is outside the valid range (350–5200 nm).
     """
-    if not sellmeier_is_valid(wavelength_m, T):
-        raise ValueError(
-            f"Sellmeier equation invalid at λ = {wavelength_m * 1e9:.1f} nm, T = {T}°C. "
-            f"Valid range: 350–5200 nm."
-        )
+
     lam = wavelength_m * 1e6
     A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
     T_K = T + 273.15
@@ -161,7 +163,7 @@ def wave_vectors(
         T:        Crystal temperature [°C].
 
     Returns:
-        Tuple (kp, ks, ki) of wave-vector magnitudes [rad/m].
+        Tuple (kp, ks, ki) of wave-vector norms [rad/m].
     """
     return (
         k_norm(lambda_p, sellmeier(lambda_p, T)),
@@ -186,7 +188,7 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
         k_s * cos θ_s + k_i * cos θ_i + G - k_p = 0
 
     Args:
-        theta_s: Signal emission angle w.r.t. pump axis [rad].
+        theta_s: Signal emission angle w.r.t. optical axis [rad].
         ks:      Signal wave-vector magnitude [rad/m].
         ki:      Idler wave-vector magnitude [rad/m].
         kp:      Pump wave-vector magnitude [rad/m].
@@ -199,6 +201,7 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
     arg = (ks / ki) * np.sin(theta_s)
     if np.abs(arg) > 1:
         return np.nan
+    # arg = np.clip(arg, -1, 1) # Use to stabilize numerical instability
     theta_i = np.arcsin(arg)
     return ks * np.cos(theta_s) + ki * np.cos(theta_i) + G - kp
 
@@ -279,8 +282,6 @@ def run_sweep(
     results = []
     for ls in np.linspace(lambda_s_min, lambda_s_max, n_sweep):
         li = get_lambda_i(lambda_p, ls)
-        if not (sellmeier_is_valid(ls, T) and sellmeier_is_valid(li, T)):
-            continue
         kp, ks, ki = wave_vectors(lambda_p, ls, li, T)
         theta_max = np.arcsin(min(1.0, ki / ks)) if ks >= ki else np.pi / 2
         bracket_high = theta_max * 0.9999
@@ -370,7 +371,7 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
         xy=(ls_collinear * 1e9, 0),
         xytext=(ls_collinear * 1e9 - 55, 0.55),
         fontsize=SMALL,
-        color=TEAL,
+        color="black",
         arrowprops=dict(arrowstyle="->", color=TEAL, lw=1.0),
     )
     ax.text(
@@ -423,14 +424,14 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
         arrowprops=dict(arrowstyle="->", color=ORANGE, lw=1.0),
     )
     ax.text(
-        0.97,
+        0.03,
         0.97,
         params,
         transform=ax.transAxes,
         fontsize=SMALL,
         color="0",
         va="top",
-        ha="right",
+        ha="left",  # ← was "right"
         bbox=dict(
             boxstyle="round,pad=0.35",
             facecolor="white",
@@ -441,7 +442,7 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
     ax.set_xlabel("Idler wavelength  $\\lambda_i$  (nm)")
     ax.set_ylabel("Idler emission angle  $\\theta_i$")
     ax.set_title("QPM Idler Emission Angle")
-    ax.legend()
+    ax.legend(loc="lower right")
     ax.grid(alpha=0.5, linestyle="--")
     fig.tight_layout()
     fig.savefig(SCRIPT_DIR / "qpm_idler.png", dpi=300, bbox_inches="tight")
@@ -486,6 +487,7 @@ def main() -> None:
     )
 
     plot_results(results, ls_collinear)
+    plt.show()
 
 
 if __name__ == "__main__":
