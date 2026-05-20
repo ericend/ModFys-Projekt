@@ -33,7 +33,8 @@ SCRIPT_DIR = Path(__file__).parent
 
 LAMBDA_P: float = 532e-9  # Pump wavelength [m]
 POLING_PERIOD: float = 8.5e-6  # Poling period [m]
-G: float = 2 * np.pi / POLING_PERIOD  # Reciprocal lattice vector [rad/m]
+M: int = 1
+G: float = M * 2 * np.pi / POLING_PERIOD  # Reciprocal lattice vector [rad/m]
 T: float = 80.0  # Crystal temperature [C]
 
 
@@ -77,16 +78,18 @@ print(
 
 
 # Signal wavelength sweep range.
-# LAMBDA_S_MIN is derived from the IR validity limit of the Sellmeier equation
-# (n² > 1 up to ~7384 nm at 80°C). Energy conservation links signal and idler:
-#   λ_i = λ_p · λ_s / (λ_s − λ_p)  ≤  LAMBDA_I_MAX
-#   → λ_s ≥ λ_p · LAMBDA_I_MAX / (LAMBDA_I_MAX − λ_p)
+# LAMBDA_S_MIN is derived from the validity limit of the Sellmeier equation (at which wavelengths does the Sellmeier eq. break down)
+# (n² > 1 up to ~7384 nm at 80°C).
+# Energy conservation links signal and idler:
+# λ_i = λ_p · λ_s / (λ_s − λ_p)  ≤  LAMBDA_I_MAX
+# ==> λ_s ≥ λ_p · LAMBDA_I_MAX / (LAMBDA_I_MAX − λ_p)
+
 # This guarantees the idler never leaves the valid Sellmeier window.
-LAMBDA_I_MAX: float = 7384e-9  # IR validity cutoff [m]
+LAMBDA_I_MAX: float = 7384e-9  # Idler wavelenght Sellmeier validity cutoff [m]
 LAMBDA_S_MIN: float = LAMBDA_P * LAMBDA_I_MAX / (LAMBDA_I_MAX - LAMBDA_P) * 1.001
 LAMBDA_S_MAX: float = 1500e-9
 
-# number of
+# number of sweeps
 N_SWEEP: int = 1000
 
 # ---------------------------------------------------------------------------
@@ -173,7 +176,7 @@ def wave_vectors(
 
 
 # ---------------------------------------------------------------------------
-# Phase-matching residual functions (roots passed to brentq)
+# Phase-matching residual functions f(...) = 0; (roots passed to brentq)
 # ---------------------------------------------------------------------------
 
 
@@ -195,9 +198,8 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
         G:       Reciprocal lattice vector of periodic poling [rad/m].
 
     Returns:
-        Phase-mismatch residual [rad/m], or nan if the implied idler
-        angle is non-physical (|sin θ_i| > 1).
-    """
+        Phase-mismatch residual [rad/m]"""
+
     arg = (ks / ki) * np.sin(theta_s)
     if np.abs(arg) > 1:
         return np.nan
@@ -229,15 +231,6 @@ def collinear_pm(
     lambda_i = get_lambda_i(lambda_p, lambda_s)
     kp, ks, ki = wave_vectors(lambda_p, lambda_s, lambda_i, T)
     return kp - ks - ki - G
-
-
-def collinear_pm_bracket(lambda_p: float = LAMBDA_P) -> tuple[float, float]:
-    """
-    Return a (lo, hi) bracket for the collinear root-finder such that both
-    signal AND idler wavelengths are inside the Sellmeier validity window.
-    """
-    ls_lo = lambda_p * LAMBDA_I_MAX / (LAMBDA_I_MAX - lambda_p) * 1.001
-    return ls_lo, LAMBDA_S_MAX
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +441,107 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
 
 # [PLOT_END]
 
+# ---------------------------------------------------------------------------
+# Energy conservation verification
+# ---------------------------------------------------------------------------
+
+C0: float = 299_792_458.0  # Speed of light [m/s]
+
+
+def verify_energy_conservation(
+    lambda_p: float,
+    lambda_s: float,
+    lambda_i: float,
+    tol: float = 1e-6,
+    verbose: bool = True,
+) -> tuple[bool, float]:
+    """
+    Verify that signal and idler wavelengths satisfy energy conservation
+    w.r.t. the pump: 1/λ_p = 1/λ_s + 1/λ_i.
+
+    Args:
+        lambda_p: Pump wavelength [m].
+        lambda_s: Signal wavelength [m].
+        lambda_i: Idler wavelength [m].
+        tol:      Fractional tolerance for pass/fail (default 1e-6).
+        verbose:  If True, print a formatted report.
+
+    Returns:
+        Tuple (passed, fractional_residual).
+    """
+    inv_lp = 1.0 / lambda_p
+    inv_ls = 1.0 / lambda_s
+    inv_li = 1.0 / lambda_i
+
+    residual_inv_m = abs(inv_lp - inv_ls - inv_li)
+    fractional = residual_inv_m / inv_lp
+
+    freq_p = C0 / lambda_p
+    freq_s = C0 / lambda_s
+    freq_i = C0 / lambda_i
+    freq_residual_hz = abs(freq_p - freq_s - freq_i)
+
+    passed = fractional < tol
+
+    if verbose:
+        status = "PASS" if passed else "FAIL"
+        print("─" * 52)
+        print(f"  Energy Conservation Check  [{status}]")
+        print("─" * 52)
+        print(f"  λ_p = {lambda_p * 1e9:10.4f} nm   f_p = {freq_p * 1e-12:10.4f} THz")
+        print(f"  λ_s = {lambda_s * 1e9:10.4f} nm   f_s = {freq_s * 1e-12:10.4f} THz")
+        print(f"  λ_i = {lambda_i * 1e9:10.4f} nm   f_i = {freq_i * 1e-12:10.4f} THz")
+        print(f"  f_s + f_i     = {(freq_s + freq_i) * 1e-12:.4f} THz")
+        print(f"  Residual |Δf| = {freq_residual_hz:.4e} Hz")
+        print(f"  Fractional Δ  = {fractional:.4e}  (tol = {tol:.0e})")
+        print("─" * 52)
+
+    return passed, fractional
+
+
+def verify_energy_conservation_sweep(
+    results: list[dict],
+    lambda_p: float = LAMBDA_P,
+    tol: float = 1e-6,
+) -> None:
+    """
+    Run energy conservation verification across all results from run_sweep()
+    and print a summary.
+
+    Args:
+        results:  Output from run_sweep().
+        lambda_p: Pump wavelength [m].
+        tol:      Fractional tolerance for pass/fail (default 1e-6).
+    """
+    n_total = len(results)
+    n_passed = 0
+    max_frac = 0.0
+    worst = None
+
+    for r in results:
+        passed, frac = verify_energy_conservation(
+            lambda_p, r["lambda_s"], r["lambda_i"], tol=tol, verbose=False
+        )
+        if passed:
+            n_passed += 1
+        if frac > max_frac:
+            max_frac = frac
+            worst = r
+
+    print("=" * 52)
+    print("  Energy Conservation — Sweep Summary")
+    print("=" * 52)
+    print(f"  Points checked : {n_total}")
+    print(f"  Passed         : {n_passed} / {n_total}")
+    print(f"  Tolerance      : {tol:.0e} (fractional)")
+    print(f"  Max Δ(1/λ) / (1/λ_p) : {max_frac:.4e}")
+    if worst:
+        print(
+            f"  Worst point    : λ_s = {worst['lambda_s'] * 1e9:.2f} nm, "
+            f"λ_i = {worst['lambda_i'] * 1e9:.2f} nm"
+        )
+    print("=" * 52)
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -483,7 +577,7 @@ def main() -> None:
             f"{r['theta_i']:9.3f}"
         )
 
-    ls_lo, ls_hi = collinear_pm_bracket()
+    ls_lo, ls_hi = LAMBDA_S_MIN, LAMBDA_S_MAX
     ls_collinear = brentq(collinear_pm, ls_lo, ls_hi, args=(LAMBDA_P, T, G))
     li_collinear = get_lambda_i(LAMBDA_P, ls_collinear)
     print(
@@ -493,7 +587,16 @@ def main() -> None:
     )
 
     plot_results(results, ls_collinear)
-    plt.show()
+
+    print("\n--- Spot-check at collinear phase-matching point ---")
+    verify_energy_conservation(LAMBDA_P, ls_collinear, li_collinear)
+
+    print("\n--- Spot-check at θ_s = 1° ---")
+    verify_energy_conservation(LAMBDA_P, closest["lambda_s"], closest["lambda_i"])
+
+    print("\n--- Full sweep verification ---")
+    verify_energy_conservation_sweep(results)
+    # plt.show()
 
 
 if __name__ == "__main__":
