@@ -104,7 +104,7 @@ def k_norm(wavelength: float, ref_index: float) -> float:
         Wave-vector magnitude [rad/m].
     """
     mag: float = (2 * np.pi * ref_index) / wavelength
-    if mag <= 0:
+    if mag < 0:
         raise ValueError("Invalid wavevector")
     return mag
 
@@ -183,7 +183,7 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
     arg = (ks / ki) * np.sin(theta_s)
     if np.abs(arg) > 1:
         return np.nan
-    # arg = np.clip(arg, -1, 1) # Use to stabilize numerical instabilities
+    # arg = np.clip(arg, -1, 1) # Use to stabilize numerical instabilities if needed
     theta_i = np.arcsin(arg)
     return ks * np.cos(theta_s) + ki * np.cos(theta_i) + G - kp
 
@@ -253,8 +253,14 @@ def run_sweep(
     for ls in np.linspace(lambda_s_min, lambda_s_max, n_sweep):
         li = get_lambda_i(lambda_p, ls)
         kp, ks, ki = wave_vectors(lambda_p, ls, li, T)
-        theta_max = np.arcsin(min(1.0, ki / ks)) if ks >= ki else np.pi / 2
-        bracket_high = theta_max * 0.9999
+        theta_max = (
+            np.arcsin(min(1.0, ki / ks)) if ks >= ki else np.pi / 2
+        )  # θ_max: largest signal angle for which transverse PM (k_s sinθ_s = k_i sinθ_i) has a real solution
+        bracket_high = (
+            theta_max * 0.9999
+        )  # Pull bracket just inside valid domain so brentq evaluates finite residuals at both endpoints
+
+        # Evaluate endpoints
         f_low = phase_mismatch(0, ks, ki, kp, G)
         f_high = phase_mismatch(bracket_high, ks, ki, kp, G)
         if np.isnan(f_low) or np.isnan(f_high) or f_low * f_high > 0:
@@ -661,17 +667,19 @@ def main() -> None:
     )
 
     plot_results(results, ls_collinear)
+    # plt.show()
 
-    print("\n--- Spot-check at collinear phase-matching point ---")
-    verify_energy_conservation(LAMBDA_P, ls_collinear, li_collinear)
+    # region ------ uncomment this to run a energy conservation check & plot the refractive index ------
+    # print("\n--- Spot-check at collinear phase-matching point ---")
+    # verify_energy_conservation(LAMBDA_P, ls_collinear, li_collinear)
 
-    print("\n--- Spot-check at θ_s = 1° ---")
-    verify_energy_conservation(LAMBDA_P, closest["lambda_s"], closest["lambda_i"])
+    # print("\n--- Spot-check at θ_s = 1° ---")
+    # verify_energy_conservation(LAMBDA_P, closest["lambda_s"], closest["lambda_i"])
 
-    print("\n--- Full sweep verification ---")
-    verify_energy_conservation_sweep(results)
-    plot_refractive_index()
-    plt.show()
+    # print("\n--- Full sweep verification ---")
+    # verify_energy_conservation_sweep(results)
+    # plot_refractive_index()
+    # endregion
 
 
 # endregion
