@@ -14,7 +14,7 @@ M: int = 1  # Lattice order
 G: float = M * 2 * np.pi / POLING_PERIOD  # Reciprocal lattice vector [rad/m]
 T: float = 80.0  # Crystal temperature [C]
 C0: float = 299_792_458.0  # Speed of light
-N_SWEEP: int = 1000  # number of sweeps for Brents method
+N_SWEEP: int = 10000  # number of sweeps for Brents method
 
 # This guarantees the idler never leaves the "valid" Sellmeier window.
 LAMBDA_I_MAX: float = 7384e-9  # Idler wavelenght Sellmeier validity cutoff [m]
@@ -287,36 +287,87 @@ def run_sweep(
 
 
 # region ------- Plots -------
-# [PLOT_START]
-
-plt.style.use("seaborn-v0_8-whitegrid")
-
-SMALL, MED, BIG = 11, 13, 14
 plt.rcParams.update(
     {
         "font.family": "serif",
-        "font.size": MED,
-        "axes.titlesize": BIG,
-        "axes.labelsize": MED,
-        "xtick.labelsize": SMALL,
-        "ytick.labelsize": SMALL,
-        "legend.fontsize": SMALL,
+        "font.serif": ["Computer Modern Roman", "DejaVu Serif", "Times New Roman"],
+        "mathtext.fontset": "cm",
+        "font.size": 11,
+        "axes.titlesize": 12,
+        "axes.labelsize": 11,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 9.5,
         "figure.dpi": 300,
+        "axes.linewidth": 0.8,
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.top": True,
+        "ytick.right": True,
+        "xtick.minor.visible": True,
+        "ytick.minor.visible": True,
+        "xtick.major.width": 0.8,
+        "ytick.major.width": 0.8,
+        "xtick.minor.width": 0.5,
+        "ytick.minor.width": 0.5,
+        "xtick.major.size": 4,
+        "ytick.major.size": 4,
+        "xtick.minor.size": 2,
+        "ytick.minor.size": 2,
+        "axes.grid": True,
+        "grid.linestyle": "--",
+        "grid.linewidth": 0.5,
+        "grid.alpha": 0.4,
+        "legend.frameon": True,
+        "legend.framealpha": 0.92,
+        "legend.edgecolor": "0.75",
+        "legend.handlelength": 1.8,
+        "lines.linewidth": 1.6,
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.bbox": "tight",
+        "savefig.dpi": 300,
     }
 )
 
-BLUE = "#002fff"
-ORANGE = "#c00000"
+C_SIGNAL = "#1a4f9c"  # deep navy blue
+C_IDLER = "#b22222"  # firebrick red
+C_ANGULAR = "#5b2c8e"  # deep violet
+C_WLCORR = "#b07800"  # dark amber
+C_GREEN = "#1a6b3a"  # forest green
+C_MARK = "#e8a800"  # gold for collinear markers
+
+
+def param_box(ax, params, loc="upper right"):
+    ha = "right" if "right" in loc else "left"
+    x = 0.97 if "right" in loc else 0.03
+    y = 0.97 if "upper" in loc else 0.03
+    va = "top" if "upper" in loc else "bottom"
+    ax.text(
+        x,
+        y,
+        params,
+        transform=ax.transAxes,
+        fontsize=9.5,
+        va=va,
+        ha=ha,
+        bbox=dict(
+            boxstyle="round,pad=0.4",
+            facecolor="white",
+            edgecolor="0.70",
+            linewidth=0.7,
+            alpha=0.92,
+        ),
+    )
 
 
 def plot_results(results: list[dict], ls_collinear: float) -> None:
     """
-    Plot signal and idler emission angles vs wavelength as separate figures.
-
-    Marks the collinear phase-matching point (θ = 0) on both plots.
+    Plot signal/idler emission angles, angular correlation, and wavelength
+    correlation as separate publication-quality figures.
 
     Args:
-        results:       Output from run_sweep.
+        results:       Output from run_sweep (with collinear point appended).
         ls_collinear:  Collinear phase-matching signal wavelength [m].
     """
     ls_nm = np.array([r["lambda_s"] * 1e9 for r in results])
@@ -326,181 +377,132 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
     li_col_nm = get_lambda_i(LAMBDA_P, ls_collinear) * 1e9
 
     params = (
-        f"$\\lambda_p$ = {LAMBDA_P * 1e9:.0f} nm\n"
-        f"$\\Lambda$ = {POLING_PERIOD * 1e6:.1f} µm\n"
-        f"$T$ = {T:.0f} °C"
+        f"$\lambda_p = {LAMBDA_P * 1e9:.0f}$ nm\n"
+        f"$\Lambda = {POLING_PERIOD * 1e6:.1f}\;\mu$m\n"
+        f"$T = {T:.0f}\,^\circ$C"
     )
 
     # ── Signal plot ──────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-
-    ax.plot(ls_nm, ts_deg, color=BLUE, lw=1.8, zorder=3)
-    # ax.fill_between(ls_nm, ts_deg, alpha=0.08, color=BLUE, zorder=2)
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    ax.plot(ls_nm, ts_deg, color=C_SIGNAL, lw=1.6, zorder=3)
     ax.scatter(
         ls_collinear * 1e9,
         0,
-        color=BLUE,
-        edgecolors="white",
-        linewidths=1.4,
-        s=80,
-        zorder=1,
-        label=f"Collinear:  $\\lambda_s$ = {ls_collinear * 1e9:.1f} nm,  $\\theta_s$ = 0°",
+        color=C_MARK,
+        edgecolors=C_SIGNAL,
+        linewidths=0.9,
+        s=55,
+        zorder=5,
     )
     ax.annotate(
-        f"{ls_collinear * 1e9:.1f} nm",
+        rf"Collinear: $\lambda_s = {ls_collinear * 1e9:.1f}$ nm,  $\theta_s = 0$",
         xy=(ls_collinear * 1e9, 0),
-        xytext=(ls_collinear * 1e9 - 55, 0.55),
-        fontsize=SMALL,
-        color="black",
-        arrowprops=dict(arrowstyle="->", color=BLUE, lw=1.0),
+        xytext=(ls_collinear * 1e9 - 160, 0.6),
+        fontsize=9,
+        color="0.2",
+        arrowprops=dict(arrowstyle="-|>", color="0.3", lw=0.7),
     )
-    ax.text(
-        0.97,
-        0.97,
-        params,
-        transform=ax.transAxes,
-        fontsize=SMALL,
-        color="0",
-        va="top",
-        ha="right",
-        bbox=dict(
-            boxstyle="round,pad=0.35",
-            facecolor="white",
-            edgecolor="0.82",
-            linewidth=0.8,
-        ),
-    )
-    ax.set_xlabel("Signal wavelength  $\\lambda_s$  (nm)")
-    ax.set_ylabel("Signal emission angle  $\\theta_s (°)$")
-    ax.set_title("QPM Signal Emission Angle")
-    ax.legend()
-    ax.grid(alpha=0.5, linestyle="--")
+    param_box(ax, params, "upper right")
+    ax.set_xlabel(r"Signal wavelength $\lambda_s$ (nm)")
+    ax.set_ylabel(r"Signal emission angle $\theta_s$ (°)")
+    ax.set_title(r"QPM Signal Emission Angle — MgO:LiTaO$_3$")
     fig.tight_layout()
-    fig.savefig(SCRIPT_DIR / "qpm_signal.png", dpi=300, bbox_inches="tight")
-
-    # plt.show()
+    fig.savefig(SCRIPT_DIR / "qpm_signal.png")
 
     # ── Idler plot ───────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-
-    ax.plot(li_nm, ti_deg, color=ORANGE, lw=1.8, zorder=3)
-    # ax.fill_between(li_nm, ti_deg, alpha=0.08, color=ORANGE, zorder=2)
+    fig, ax = plt.subplots(figsize=(6.5, 4.2))
+    ax.plot(li_nm, ti_deg, color=C_IDLER, lw=1.6, zorder=3)
     ax.scatter(
-        li_col_nm,
-        0,
-        color=ORANGE,
-        edgecolors="white",
-        linewidths=1.4,
-        s=80,
-        zorder=1,
-        label=f"Collinear:  $\\lambda_i$ = {li_col_nm:.1f} nm,  $\\theta_i$ = 0°",
+        li_col_nm, 0, color=C_MARK, edgecolors=C_IDLER, linewidths=0.9, s=55, zorder=5
     )
     ax.annotate(
-        f"{li_col_nm:.1f} nm",
+        rf"Collinear: $\lambda_i = {li_col_nm:.1f}$ nm,  $\theta_i = 0$",
         xy=(li_col_nm, 0),
-        xytext=(li_col_nm + 200, 3.5),
-        fontsize=SMALL,
-        color="black",
-        arrowprops=dict(arrowstyle="->", color=ORANGE, lw=1.0),
+        xytext=(li_col_nm + 350, 3.8),
+        fontsize=9,
+        color="0.2",
+        arrowprops=dict(arrowstyle="-|>", color="0.3", lw=0.7),
     )
-    ax.text(
-        0.03,
-        0.97,
-        params,
-        transform=ax.transAxes,
-        fontsize=SMALL,
-        color="0",
-        va="top",
-        ha="left",  # ← was "right"
-        bbox=dict(
-            boxstyle="round,pad=0.35",
-            facecolor="white",
-            edgecolor="0.82",
-            linewidth=0.8,
-        ),
-    )
-    ax.set_xlabel("Idler wavelength  $\\lambda_i$  (nm)")
-    ax.set_ylabel("Idler emission angle  $\\theta_i (°)$")
-    ax.set_title("QPM Idler Emission Angle")
-    ax.legend(loc="lower right")
-    ax.grid(alpha=0.5, linestyle="--")
+    param_box(ax, params, "upper left")
+    ax.set_xlabel(r"Idler wavelength $\lambda_i$ (nm)")
+    ax.set_ylabel(r"Idler emission angle $\theta_i$ (°)")
+    ax.set_title(r"QPM Idler Emission Angle — MgO:LiTaO$_3$")
     fig.tight_layout()
-    fig.savefig(SCRIPT_DIR / "qpm_idler.png", dpi=300, bbox_inches="tight")
+    fig.savefig(SCRIPT_DIR / "qpm_idler.png")
 
-    # ── Angular correlation plot ─────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(6, 5))
-
-    ts = np.array([r["theta_s"] for r in results])
-    ti = np.array([r["theta_i"] for r in results])
-
-    ax.plot(ts, ti, color="#6a0dad", lw=1.8)
-    ax.set_xlabel("Signal emission angle  $\\theta_s$  (°)")
-    ax.set_ylabel("Idler emission angle  $\\theta_i$  (°)")
-    ax.set_title("QPM Angular Correlation")
-    ax.text(
-        0.97,
-        0.97,
-        params,
-        transform=ax.transAxes,
-        fontsize=SMALL,
-        va="top",
-        ha="right",
-        bbox=dict(
-            boxstyle="round,pad=0.35",
-            facecolor="white",
-            edgecolor="0.82",
-            linewidth=0.8,
-        ),
+    # ── Angular correlation ──────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(5.5, 5.0))
+    ax.plot(ts_deg, ti_deg, color=C_ANGULAR, lw=1.6, zorder=3)
+    ax.scatter(
+        0,
+        0,
+        color=C_MARK,
+        edgecolors=C_ANGULAR,
+        linewidths=0.9,
+        s=55,
+        zorder=5,
+        label=r"Collinear: $\theta_s = \theta_i = 0°$",
     )
-    ax.grid(alpha=0.5, linestyle="--")
+    ax.scatter(
+        ts_deg[0],
+        ti_deg[0],
+        s=45,
+        facecolors="none",
+        edgecolors=C_ANGULAR,
+        linewidths=1.0,
+        zorder=5,
+    )
+    ax.annotate(
+        r"Sellmeier cutoff" + f"\n($\lambda_i = {LAMBDA_I_MAX * 1e9:.0f}$ nm)",
+        xy=(ts_deg[0], ti_deg[0]),
+        xytext=(ts_deg[0] + 0.5, ti_deg[0] + 4.5),
+        fontsize=8.5,
+        color="0.3",
+        arrowprops=dict(arrowstyle="-|>", color="0.3", lw=0.7),
+    )
+    param_box(ax, params, "upper right")
+    ax.set_xlabel(r"Signal emission angle $\theta_s$ (°)")
+    ax.set_ylabel(r"Idler emission angle $\theta_i$ (°)")
+    ax.set_title(r"QPM Angular Correlation")
+    ax.legend(loc="lower right", fontsize=9)
     fig.tight_layout()
-    fig.savefig(
-        SCRIPT_DIR / "qpm_angular_correlation.png", dpi=300, bbox_inches="tight"
-    )
+    fig.savefig(SCRIPT_DIR / "qpm_angular_correlation.png")
 
-    # ── Wavelength correlation plot ──────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(6, 5))
-
-    ls_nm = np.array([r["lambda_s"] * 1e9 for r in results])
-    li_nm = np.array([r["lambda_i"] * 1e9 for r in results])
-
-    ax.plot(ls_nm, li_nm, color="#c47a00", lw=1.8)
+    # ── Wavelength correlation ───────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(5.5, 5.0))
+    ax.plot(ls_nm, li_nm, color=C_WLCORR, lw=1.6, zorder=3)
     ax.scatter(
         ls_collinear * 1e9,
-        get_lambda_i(LAMBDA_P, ls_collinear) * 1e9,
-        color="#3538bd",
-        edgecolors="white",
-        linewidths=1.4,
-        s=80,
+        li_col_nm,
+        color=C_MARK,
+        edgecolors=C_WLCORR,
+        linewidths=0.9,
+        s=55,
         zorder=5,
-        label=f"Collinear:  $\\lambda_s$ = {ls_collinear * 1e9:.1f} nm,  $\\lambda_i$ = {get_lambda_i(LAMBDA_P, ls_collinear) * 1e9:.1f} nm",
+        label=f"Collinear: $\lambda_s={ls_collinear * 1e9:.1f}$ nm, $\lambda_i={li_col_nm:.1f}$ nm",
     )
-    ax.set_xlabel("Signal wavelength  $\\lambda_s$  (nm)")
-    ax.set_ylabel("Idler wavelength  $\\lambda_i$  (nm)")
-    ax.set_title("QPM Wavelength Correlation")
+    ax.set_xlabel(r"Signal wavelength $\lambda_s$ (nm)")
+    ax.set_ylabel(r"Idler wavelength $\lambda_i$ (nm)")
+    ax.set_title(r"QPM Wavelength Correlation")
+    ax.legend(loc="upper right", fontsize=9)
     ax.text(
-        0.97,
-        0.70,
+        0.03,
+        0.30,
         params,
         transform=ax.transAxes,
-        fontsize=SMALL,
+        fontsize=9.5,
         va="top",
-        ha="right",
+        ha="left",
         bbox=dict(
-            boxstyle="round,pad=0.35",
+            boxstyle="round,pad=0.4",
             facecolor="white",
-            edgecolor="0.82",
-            linewidth=0.8,
+            edgecolor="0.70",
+            linewidth=0.7,
+            alpha=0.92,
         ),
     )
-    ax.legend(fontsize=SMALL)
-    ax.grid(alpha=0.5, linestyle="--")
     fig.tight_layout()
-    fig.savefig(
-        SCRIPT_DIR / "qpm_wavelength_correlation.png", dpi=300, bbox_inches="tight"
-    )
-
-    # plt.show()
+    fig.savefig(SCRIPT_DIR / "qpm_wavelength_correlation.png")
 
 
 def plot_refractive_index(
@@ -510,10 +512,9 @@ def plot_refractive_index(
     n_points: int = 5000,
 ) -> None:
     """
-    Plot the Sellmeier refractive index over a wavelength window.
+    Plot the Sellmeier refractive index over the transparency window.
 
-    Marks the pump wavelength and the degenerate (collinear) signal/idler
-    wavelength as reference points.
+    Marks the pump wavelength and the degenerate wavelength as reference points.
 
     Args:
         lambda_min: Start of wavelength sweep [m].
@@ -523,77 +524,53 @@ def plot_refractive_index(
     """
     lam_sweep = np.linspace(lambda_min, lambda_max, n_points)
     n_vals = np.array([sellmeier(lam, T) for lam in lam_sweep])
-
     n_pump = sellmeier(LAMBDA_P, T)
     lam_deg = 2 * LAMBDA_P
     n_deg = sellmeier(lam_deg, T)
 
-    GREEN = "#1a8c3f"
-
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
     ax.plot(
         lam_sweep * 1e9,
         n_vals,
-        color=GREEN,
-        lw=1.8,
+        color=C_GREEN,
+        lw=1.6,
         zorder=3,
-        label="$n(\\lambda)$ — Sellmeier",
+        label=r"$n_e(\lambda)$ — Sellmeier",
     )
-
-    ax.axvline(LAMBDA_P * 1e9, color=BLUE, lw=0.9, ls=":", zorder=2)
-    ax.axvline(lam_deg * 1e9, color=ORANGE, lw=0.9, ls=":", zorder=2)
-
+    ax.axvline(LAMBDA_P * 1e9, color=C_SIGNAL, lw=0.8, ls=":", zorder=2)
+    ax.axvline(lam_deg * 1e9, color=C_IDLER, lw=0.8, ls=":", zorder=2)
     ax.scatter(
         [LAMBDA_P * 1e9],
         [n_pump],
-        color=BLUE,
+        color=C_SIGNAL,
         edgecolors="white",
-        linewidths=1.4,
-        s=70,
+        linewidths=1.0,
+        s=60,
         zorder=5,
-        label=f"$\\lambda_p$ = {LAMBDA_P * 1e9:.0f} nm,  $n$ = {n_pump:.4f}",
+        label=f"$\lambda_p = {LAMBDA_P * 1e9:.0f}$ nm,  $n = {n_pump:.4f}$",
     )
     ax.scatter(
         [lam_deg * 1e9],
         [n_deg],
-        color=ORANGE,
+        color=C_IDLER,
         edgecolors="white",
-        linewidths=1.4,
-        s=70,
+        linewidths=1.0,
+        s=60,
         zorder=5,
-        label=f"$\\lambda_{{\\rm deg}}$ = {lam_deg * 1e9:.0f} nm,  $n$ = {n_deg:.4f}",
+        label=f"$\lambda_{{\mathrm{{deg}}}} = {lam_deg * 1e9:.0f}$ nm,  $n = {n_deg:.4f}$",
     )
-
-    ax.text(
-        LAMBDA_P * 1e9 + 60,
-        n_pump - 0.04,
-        f"{LAMBDA_P * 1e9:.0f} nm",
-        fontsize=SMALL - 1,
-        color=BLUE,
-        va="top",
-    )
-    ax.text(
-        lam_deg * 1e9 + 60,
-        n_deg - 0.04,
-        f"{lam_deg * 1e9:.0f} nm",
-        fontsize=SMALL - 1,
-        color=ORANGE,
-        va="top",
-    )
-
-    ax.set_xlabel("Wavelength  $\\lambda$  (nm)")
-    ax.set_ylabel("Refractive index  $n(\\lambda)$")
+    ax.set_xlabel(r"Wavelength $\lambda$ (nm)")
+    ax.set_ylabel(r"Refractive index $n_e(\lambda)$")
     ax.set_title(
-        f"Sellmeier Refractive Index — 1 mol% MgO:LiTaO$_3$  ($T$ = {T:.0f} °C)"
+        r"Sellmeier Refractive Index — 1 mol% MgO:LiTaO$_3$"
+        + f"  ($T = {T:.0f}\,^\circ$C)"
     )
-    ax.legend(loc="upper right", fontsize=SMALL - 1)
     ax.set_xlim(lam_sweep[0] * 1e9 - 50, lam_sweep[-1] * 1e9 + 50)
-    ax.grid(alpha=0.4, linestyle="--")
+    ax.legend(loc="upper right", fontsize=9.5)
     fig.tight_layout()
-    fig.savefig(SCRIPT_DIR / "qpm_refractive_index.png", dpi=300, bbox_inches="tight")
+    fig.savefig(SCRIPT_DIR / "qpm_refractive_index.png")
 
 
-# [PLOT_END]
 # endregion
 
 
@@ -705,6 +682,25 @@ def main() -> None:
     """Run the QPM sweep, print a sanity-check table, and show the plots."""
     results = run_sweep()
 
+    # Append the collinear point (θ_s = θ_i = 0) which the sweep misses
+    # because the brentq bracket collapses to zero width there
+    ls_collinear = brentq(
+        collinear_pm, LAMBDA_S_MIN, LAMBDA_S_MAX, args=(LAMBDA_P, T, G)
+    )
+    li_collinear = get_lambda_i(LAMBDA_P, ls_collinear)
+    kp, ks, ki = wave_vectors(LAMBDA_P, ls_collinear, li_collinear, T)
+    results.append(
+        {
+            "lambda_s": ls_collinear,
+            "lambda_i": li_collinear,
+            "theta_s": 0.0,
+            "theta_i": 0.0,
+            "n_s": sellmeier(ls_collinear, T),
+            "n_i": sellmeier(li_collinear, T),
+        }
+    )
+    results.sort(key=lambda r: r["lambda_s"])  # keep list ordered by λ_s
+
     # Find the phase-matched pair at θ_s = 1°
     TARGET_THETA_S = 1.0  # degrees
     closest = min(results, key=lambda r: abs(r["theta_s"] - TARGET_THETA_S))
@@ -743,15 +739,15 @@ def main() -> None:
     # plt.show()
 
     # region ------ uncomment this to run a energy conservation check & plot the refractive index ------
-    # print("\n--- Spot-check at collinear phase-matching point ---")
-    # verify_energy_conservation(LAMBDA_P, ls_collinear, li_collinear)
+    print("\n--- Spot-check at collinear phase-matching point ---")
+    verify_energy_conservation(LAMBDA_P, ls_collinear, li_collinear)
 
-    # print("\n--- Spot-check at θ_s = 1° ---")
-    # verify_energy_conservation(LAMBDA_P, closest["lambda_s"], closest["lambda_i"])
+    print("\n--- Spot-check at θ_s = 1° ---")
+    verify_energy_conservation(LAMBDA_P, closest["lambda_s"], closest["lambda_i"])
 
-    # print("\n--- Full sweep verification ---")
-    # verify_energy_conservation_sweep(results)
-    # plot_refractive_index()
+    print("\n--- Full sweep verification ---")
+    verify_energy_conservation_sweep(results)
+    plot_refractive_index()
     # endregion
 
 
