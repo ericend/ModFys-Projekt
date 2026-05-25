@@ -427,6 +427,79 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
     fig.tight_layout()
     fig.savefig(SCRIPT_DIR / "qpm_idler.png", dpi=300, bbox_inches="tight")
 
+    # ── Angular correlation plot ─────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    ts = np.array([r["theta_s"] for r in results])
+    ti = np.array([r["theta_i"] for r in results])
+
+    ax.plot(ts, ti, color="#6a0dad", lw=1.8)
+    ax.set_xlabel("Signal emission angle  $\\theta_s$  (°)")
+    ax.set_ylabel("Idler emission angle  $\\theta_i$  (°)")
+    ax.set_title("QPM Angular Correlation")
+    ax.text(
+        0.97,
+        0.97,
+        params,
+        transform=ax.transAxes,
+        fontsize=SMALL,
+        va="top",
+        ha="right",
+        bbox=dict(
+            boxstyle="round,pad=0.35",
+            facecolor="white",
+            edgecolor="0.82",
+            linewidth=0.8,
+        ),
+    )
+    ax.grid(alpha=0.5, linestyle="--")
+    fig.tight_layout()
+    fig.savefig(
+        SCRIPT_DIR / "qpm_angular_correlation.png", dpi=300, bbox_inches="tight"
+    )
+
+    # ── Wavelength correlation plot ──────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    ls_nm = np.array([r["lambda_s"] * 1e9 for r in results])
+    li_nm = np.array([r["lambda_i"] * 1e9 for r in results])
+
+    ax.plot(ls_nm, li_nm, color="#c47a00", lw=1.8)
+    ax.scatter(
+        ls_collinear * 1e9,
+        get_lambda_i(LAMBDA_P, ls_collinear) * 1e9,
+        color="#3538bd",
+        edgecolors="white",
+        linewidths=1.4,
+        s=80,
+        zorder=5,
+        label=f"Collinear:  $\\lambda_s$ = {ls_collinear * 1e9:.1f} nm,  $\\lambda_i$ = {get_lambda_i(LAMBDA_P, ls_collinear) * 1e9:.1f} nm",
+    )
+    ax.set_xlabel("Signal wavelength  $\\lambda_s$  (nm)")
+    ax.set_ylabel("Idler wavelength  $\\lambda_i$  (nm)")
+    ax.set_title("QPM Wavelength Correlation")
+    ax.text(
+        0.97,
+        0.70,
+        params,
+        transform=ax.transAxes,
+        fontsize=SMALL,
+        va="top",
+        ha="right",
+        bbox=dict(
+            boxstyle="round,pad=0.35",
+            facecolor="white",
+            edgecolor="0.82",
+            linewidth=0.8,
+        ),
+    )
+    ax.legend(fontsize=SMALL)
+    ax.grid(alpha=0.5, linestyle="--")
+    fig.tight_layout()
+    fig.savefig(
+        SCRIPT_DIR / "qpm_wavelength_correlation.png", dpi=300, bbox_inches="tight"
+    )
+
     # plt.show()
 
 
