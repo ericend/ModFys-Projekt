@@ -84,7 +84,7 @@ print(
 # λ_i = λ_p · λ_s / (λ_s − λ_p)  ≤  LAMBDA_I_MAX
 # ==> λ_s ≥ λ_p · LAMBDA_I_MAX / (LAMBDA_I_MAX − λ_p)
 
-# This guarantees the idler never leaves the valid Sellmeier window.
+# This guarantees the idler never leaves the "valid" Sellmeier window.
 LAMBDA_I_MAX: float = 7384e-9  # Idler wavelenght Sellmeier validity cutoff [m]
 LAMBDA_S_MIN: float = LAMBDA_P * LAMBDA_I_MAX / (LAMBDA_I_MAX - LAMBDA_P) * 1.001
 LAMBDA_S_MAX: float = 1500e-9
@@ -439,6 +439,96 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
     # plt.show()
 
 
+def plot_refractive_index(
+    lambda_min: float = LAMBDA_S_MIN,
+    lambda_max: float = 7384e-9,
+    T: float = T,
+    n_points: int = 5000,
+) -> None:
+    """
+    Plot the Sellmeier refractive index over a wavelength window.
+
+    Marks the pump wavelength and the degenerate (collinear) signal/idler
+    wavelength as reference points.
+
+    Args:
+        lambda_min: Start of wavelength sweep [m].
+        lambda_max: End of wavelength sweep [m].
+        T:          Crystal temperature [°C].
+        n_points:   Number of sample points.
+    """
+    lam_sweep = np.linspace(lambda_min, lambda_max, n_points)
+    n_vals = np.array([sellmeier(lam, T) for lam in lam_sweep])
+
+    n_pump = sellmeier(LAMBDA_P, T)
+    lam_deg = 2 * LAMBDA_P
+    n_deg = sellmeier(lam_deg, T)
+
+    GREEN = "#1a8c3f"
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(
+        lam_sweep * 1e9,
+        n_vals,
+        color=GREEN,
+        lw=1.8,
+        zorder=3,
+        label="$n(\\lambda)$ — Sellmeier",
+    )
+
+    ax.axvline(LAMBDA_P * 1e9, color=TEAL, lw=0.9, ls=":", zorder=2)
+    ax.axvline(lam_deg * 1e9, color=ORANGE, lw=0.9, ls=":", zorder=2)
+
+    ax.scatter(
+        [LAMBDA_P * 1e9],
+        [n_pump],
+        color=TEAL,
+        edgecolors="white",
+        linewidths=1.4,
+        s=70,
+        zorder=5,
+        label=f"$\\lambda_p$ = {LAMBDA_P * 1e9:.0f} nm,  $n$ = {n_pump:.4f}",
+    )
+    ax.scatter(
+        [lam_deg * 1e9],
+        [n_deg],
+        color=ORANGE,
+        edgecolors="white",
+        linewidths=1.4,
+        s=70,
+        zorder=5,
+        label=f"$\\lambda_{{\\rm deg}}$ = {lam_deg * 1e9:.0f} nm,  $n$ = {n_deg:.4f}",
+    )
+
+    ax.text(
+        LAMBDA_P * 1e9 + 60,
+        n_pump - 0.04,
+        f"{LAMBDA_P * 1e9:.0f} nm",
+        fontsize=SMALL - 1,
+        color=TEAL,
+        va="top",
+    )
+    ax.text(
+        lam_deg * 1e9 + 60,
+        n_deg - 0.04,
+        f"{lam_deg * 1e9:.0f} nm",
+        fontsize=SMALL - 1,
+        color=ORANGE,
+        va="top",
+    )
+
+    ax.set_xlabel("Wavelength  $\\lambda$  (nm)")
+    ax.set_ylabel("Refractive index  $n(\\lambda)$")
+    ax.set_title(
+        f"Sellmeier Refractive Index — 1 mol% MgO:LiTaO$_3$  ($T$ = {T:.0f} °C)"
+    )
+    ax.legend(loc="upper right", fontsize=SMALL - 1)
+    ax.set_xlim(lam_sweep[0] * 1e9 - 50, lam_sweep[-1] * 1e9 + 50)
+    ax.grid(alpha=0.4, linestyle="--")
+    fig.tight_layout()
+    fig.savefig(SCRIPT_DIR / "qpm_refractive_index.png", dpi=300, bbox_inches="tight")
+
+
 # [PLOT_END]
 
 # ---------------------------------------------------------------------------
@@ -596,6 +686,7 @@ def main() -> None:
 
     print("\n--- Full sweep verification ---")
     verify_energy_conservation_sweep(results)
+    plot_refractive_index()
     # plt.show()
 
 
