@@ -1,100 +1,79 @@
-"""
-Quasi-phase-matched (QPM) parametric down-conversion in 1mol% MgO-doped nearly stoichiometric lithium tantalate.
-
-Sweeps over signal wavelengths and, for each, solves the non-collinear
-phase-matching condition to find the signal and idler emission angles.
-Also locates the degenerate collinear phase-matching wavelength.
-
-Physical process
-----------------
-A pump photon (λ_p) spontaneously splits into a signal (λ_s) and idler (λ_i)
-photon pair subject to:
-
-  - Energy conservation : 1/λ_p = 1/λ_s + 1/λ_i
-
-  - Momentum conservation: k_p = k_s * cos θ_s + k_i * cos θ_i  (longitudinal)
-                           0   = k_s * sin θ_s - k_i * sin θ_i  (transverse)
-
-The periodic poling provides a reciprocal lattice vector G = 2*pi/Λ which gives
-the momentum condition: k_p = k_s + k_i + G (quasi-phase-matching).
-"""
-
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import brentq
 
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR: Path = Path(__file__).parent
 
-# ---------------------------------------------------------------------------
-# Physical constants /  parameters
-# ---------------------------------------------------------------------------
 
+# region ------- Physical constants / parameters -------
 LAMBDA_P: float = 532e-9  # Pump wavelength [m]
 POLING_PERIOD: float = 8.5e-6  # Poling period [m]
-M: int = 1
+M: int = 1  # Lattice order
 G: float = M * 2 * np.pi / POLING_PERIOD  # Reciprocal lattice vector [rad/m]
 T: float = 80.0  # Crystal temperature [C]
-
-
-# ---------------------------------------------------------------------------
-# Find Sellmeier boundaries
-# ---------------------------------------------------------------------------
-
-
-def sellmeier_validity_check(scanspace: np.ndarray) -> np.ndarray:
-    """
-    Evaluate n² across a wavelength scanspace (in µm).
-    Used to identify the valid range of the Sellmeier equation.
-    """
-    x = scanspace
-    A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
-    T_K = T + 273.15
-    bT = 4.23526e-8 * T_K**2
-    cT = -6.53227e-8 * T_K**2
-    C_eff = C + cT
-    return A + (B + bT) / (x**2 - C_eff**2) + E / (x**2 - F**2) + D * x**2
-
-
-# Scan Sellmeier over a wide range to find unphysical regions
-refractive_index_scanspace = np.linspace(0.01, 8.0, 100_000)  # µm
-
-vals = sellmeier_validity_check(refractive_index_scanspace)
-
-# n²=0 crossings: formula returns imaginary n (complete breakdown)
-zero_indices = np.where(np.diff(np.sign(vals)))[0]
-crossings_zero_nm = refractive_index_scanspace[zero_indices] * 1e3
-
-# n²=1 crossings: n drops below vacuum (physically meaningless for a dielectric)
-one_indices = np.where(np.diff(np.sign(vals - 1)))[0]
-crossings_one_nm = refractive_index_scanspace[one_indices] * 1e3
-
-print(f"n²=0 crossings: {crossings_zero_nm} nm")
-print(f"n²=1 crossings: {crossings_one_nm} nm")
-print(
-    f"Valid window (n² > 1): {crossings_one_nm[1]:.0f} nm  -->  {crossings_one_nm[2]:.0f} nm"
-)
-
-
-# Signal wavelength sweep range.
-# LAMBDA_S_MIN is derived from the validity limit of the Sellmeier equation (at which wavelengths does the Sellmeier eq. break down)
-# (n² > 1 up to ~7384 nm at 80°C).
-# Energy conservation links signal and idler:
-# λ_i = λ_p · λ_s / (λ_s − λ_p)  ≤  LAMBDA_I_MAX
-# ==> λ_s ≥ λ_p · LAMBDA_I_MAX / (LAMBDA_I_MAX − λ_p)
+C0: float = 299_792_458.0  # Speed of light
+N_SWEEP: int = 1000  # number of sweeps for Brents method
 
 # This guarantees the idler never leaves the "valid" Sellmeier window.
 LAMBDA_I_MAX: float = 7384e-9  # Idler wavelenght Sellmeier validity cutoff [m]
 LAMBDA_S_MIN: float = LAMBDA_P * LAMBDA_I_MAX / (LAMBDA_I_MAX - LAMBDA_P) * 1.001
 LAMBDA_S_MAX: float = 1500e-9
 
-# number of sweeps
-N_SWEEP: int = 1000
+# endregion
 
-# ---------------------------------------------------------------------------
-# Core physics functions
-# ---------------------------------------------------------------------------
+
+# region ------- Sellmeier boundaries -------
+
+# The scan below was used to derive LAMBDA_I_MAX = 7384e-9 m.
+# Uncomment to re-run the validity check.
+
+
+# def sellmeier_validity_check(scanspace: np.ndarray) -> np.ndarray:
+#     """
+#     Evaluate n² across a wavelength scanspace (in µm).
+#     Used to identify the valid range of the Sellmeier equation.
+#     """
+#     x = scanspace
+#     A, B, C, D, E, F = 4.54773, 0.0774167, 0.22025, -0.0226143, 2.39494, 7.45352
+#     T_K = T + 273.15
+#     bT = 4.23526e-8 * T_K**2
+#     cT = -6.53227e-8 * T_K**2
+#     C_eff = C + cT
+#     return A + (B + bT) / (x**2 - C_eff**2) + E / (x**2 - F**2) + D * x**2
+
+
+# # Scan Sellmeier over a wide range to find unphysical regions
+# refractive_index_scanspace = np.linspace(0.01, 8.0, 100_000)  # µm
+
+# vals = sellmeier_validity_check(refractive_index_scanspace)
+
+# # n²=0 crossings: formula returns non-real index
+# zero_indices = np.where(np.diff(np.sign(vals)))[0]
+# crossings_zero_nm = refractive_index_scanspace[zero_indices] * 1e3
+
+# # n²=1 crossings: n drops below vacuum
+# one_indices = np.where(np.diff(np.sign(vals - 1)))[0]
+# crossings_one_nm = refractive_index_scanspace[one_indices] * 1e3
+
+# print(f"n²=0 crossings: {crossings_zero_nm} nm")
+# print(f"n²=1 crossings: {crossings_one_nm} nm")
+# print(
+#     f"Valid window (n² > 1): {crossings_one_nm[1]:.0f} nm  -->  {crossings_one_nm[2]:.0f} nm"
+# )
+
+
+# # LAMBDA_S_MIN is derived from the validity limit of the Sellmeier equation (at which wavelengths does the Sellmeier eq. break down)
+# # (n² > 1 up to ~7384 nm at 80°C).
+# # Energy conservation links signal and idler:
+# # λ_i = λ_p · λ_s / (λ_s − λ_p)  ≤  LAMBDA_I_MAX
+# # ==> λ_s ≥ λ_p · LAMBDA_I_MAX / (LAMBDA_I_MAX − λ_p)
+
+# endregion
+
+
+# region ------- Core physics -------
 
 
 def get_lambda_i(lambda_p: float, lambda_s: float) -> float:
@@ -175,9 +154,10 @@ def wave_vectors(
     )
 
 
-# ---------------------------------------------------------------------------
-# Phase-matching residual functions f(...) = 0; (roots passed to brentq)
-# ---------------------------------------------------------------------------
+# endregion
+
+
+# region ------- Phase-matching residual functions f(...) = 0 -------
 
 
 def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) -> float:
@@ -233,9 +213,10 @@ def collinear_pm(
     return kp - ks - ki - G
 
 
-# ---------------------------------------------------------------------------
-# Main sweep: solve non-collinear phase matching across signal wavelengths
-# ---------------------------------------------------------------------------
+# endregion
+
+
+# region ------- Main sweep: solve non-collinear phase matching across signal wavelengths -------
 
 
 def run_sweep(
@@ -296,6 +277,10 @@ def run_sweep(
     return results
 
 
+# endregion
+
+
+# region ------- Plots -------
 # [PLOT_START]
 
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -314,7 +299,7 @@ plt.rcParams.update(
     }
 )
 
-TEAL = "#002fff"
+BLUE = "#002fff"
 ORANGE = "#c00000"
 
 
@@ -343,12 +328,12 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
     # ── Signal plot ──────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
-    ax.plot(ls_nm, ts_deg, color=TEAL, lw=1.8, zorder=3)
-    # ax.fill_between(ls_nm, ts_deg, alpha=0.08, color=TEAL, zorder=2)
+    ax.plot(ls_nm, ts_deg, color=BLUE, lw=1.8, zorder=3)
+    # ax.fill_between(ls_nm, ts_deg, alpha=0.08, color=BLUE, zorder=2)
     ax.scatter(
         ls_collinear * 1e9,
         0,
-        color=TEAL,
+        color=BLUE,
         edgecolors="white",
         linewidths=1.4,
         s=80,
@@ -361,7 +346,7 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
         xytext=(ls_collinear * 1e9 - 55, 0.55),
         fontsize=SMALL,
         color="black",
-        arrowprops=dict(arrowstyle="->", color=TEAL, lw=1.0),
+        arrowprops=dict(arrowstyle="->", color=BLUE, lw=1.0),
     )
     ax.text(
         0.97,
@@ -441,7 +426,7 @@ def plot_results(results: list[dict], ls_collinear: float) -> None:
 
 def plot_refractive_index(
     lambda_min: float = LAMBDA_S_MIN,
-    lambda_max: float = 7384e-9,
+    lambda_max: float = LAMBDA_I_MAX,
     T: float = T,
     n_points: int = 5000,
 ) -> None:
@@ -476,13 +461,13 @@ def plot_refractive_index(
         label="$n(\\lambda)$ — Sellmeier",
     )
 
-    ax.axvline(LAMBDA_P * 1e9, color=TEAL, lw=0.9, ls=":", zorder=2)
+    ax.axvline(LAMBDA_P * 1e9, color=BLUE, lw=0.9, ls=":", zorder=2)
     ax.axvline(lam_deg * 1e9, color=ORANGE, lw=0.9, ls=":", zorder=2)
 
     ax.scatter(
         [LAMBDA_P * 1e9],
         [n_pump],
-        color=TEAL,
+        color=BLUE,
         edgecolors="white",
         linewidths=1.4,
         s=70,
@@ -505,7 +490,7 @@ def plot_refractive_index(
         n_pump - 0.04,
         f"{LAMBDA_P * 1e9:.0f} nm",
         fontsize=SMALL - 1,
-        color=TEAL,
+        color=BLUE,
         va="top",
     )
     ax.text(
@@ -530,12 +515,10 @@ def plot_refractive_index(
 
 
 # [PLOT_END]
+# endregion
 
-# ---------------------------------------------------------------------------
-# Energy conservation verification
-# ---------------------------------------------------------------------------
 
-C0: float = 299_792_458.0  # Speed of light [m/s]
+# region ------- Energy conservation verification -------
 
 
 def verify_energy_conservation(
@@ -633,9 +616,10 @@ def verify_energy_conservation_sweep(
     print("=" * 52)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+# endregion
+
+
+# region ------- Main -------
 
 
 def main() -> None:
@@ -687,7 +671,10 @@ def main() -> None:
     print("\n--- Full sweep verification ---")
     verify_energy_conservation_sweep(results)
     plot_refractive_index()
-    # plt.show()
+    plt.show()
+
+
+# endregion
 
 
 if __name__ == "__main__":
