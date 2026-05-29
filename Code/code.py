@@ -79,7 +79,7 @@ LAMBDA_S_MAX: float = 1500e-9
 def get_lambda_i(lambda_p: float, lambda_s: float) -> float:
     """
     Derive the idler wavelength from energy conservation (1/λ_p = 1/λ_s + 1/λ_i).
-
+    λ_p < λ_s <= λ_i
     Args:
         lambda_p: Pump wavelength [m].
         lambda_s: Signal wavelength [m].
@@ -94,18 +94,18 @@ def get_lambda_i(lambda_p: float, lambda_s: float) -> float:
 
 def k_norm(wavelength: float, ref_index: float) -> float:
     """
-    Wave-vector magnitude k = 2π * n / λ inside a medium.
+    Wave-vector magnitude k = 2π * n(λ, T) / λ inside a medium.
 
     Args:
         wavelength: Free-space wavelength [m].
-        ref_index:  Refractive index (dimensionless).
+        ref_index:  Refractive index from Sellmeir eq. (dimensionless).
 
     Returns:
         Wave-vector magnitude [rad/m].
     """
     mag: float = (2 * np.pi * ref_index) / wavelength
     if mag < 0:
-        raise ValueError("Invalid wavevector")
+        raise ValueError("Negative wavevector")
     return mag
 
 
@@ -165,20 +165,29 @@ def phase_mismatch(theta_s: float, ks: float, ki: float, kp: float, G: float) ->
     QPM residual for a given signal emission angle.
 
     The idler angle θ_i is derived from transverse momentum conservation:
-        k_s * sin θ_s = k_i * sin θ_i  ==>  θ_i = arcsin((k_s/k_i) * sin θ_s)
+        k_s * sin θ_s = k_i * sin θ_i ==>  θ_i = arcsin((k_s/k_i) * sin θ_s)
+        (Since θ relative to optical axis and we assume that the pump photon travels perfectly along the optical axis)
 
-    Phase matching is satisfied when the residual equals zero:
+    Phase matching is satisfied when the residual of the parallell momentum conservation including the reciprocal lattice vector correction term
+    equals zero:
         k_s * cos θ_s + k_i * cos θ_i + G - k_p = 0
 
-    Args:
-        theta_s: Signal emission angle w.r.t. optical axis [rad].
-        ks:      Signal wave-vector magnitude [rad/m].
-        ki:      Idler wave-vector magnitude [rad/m].
-        kp:      Pump wave-vector magnitude [rad/m].
-        G:       Reciprocal lattice vector of periodic poling [rad/m].
+    Parameter
+    ---------
+    theta_s: float
+        Signal emission angle w.r.t. optical axis [rad].
+    ks: float
+        Signal wave-vector magnitude [rad/m].
+    ki: float
+        Idler wave-vector magnitude [rad/m].
+    kp: float
+        Pump wave-vector magnitude [rad/m].
+    G: float
+        Reciprocal lattice vector of periodic poling [rad/m].
 
-    Returns:
-        Phase-mismatch residual [rad/m]"""
+    Return
+    ---------
+        Phase-mismatch residual [rad/m]: float"""
 
     arg = (ks / ki) * np.sin(theta_s)
     if np.abs(arg) > 1:
@@ -193,24 +202,30 @@ def collinear_pm(
     lambda_p: float = LAMBDA_P,
     T: float = T,
     G: float = G,
+    m: int = 1 
 ) -> float:
     """
     Collinear QPM residual (θ_s = θ_i = 0): k_p - k_s - k_i - G = 0.
 
     Pass to a root-finder to locate the collinear phase-matching signal wavelength.
 
-    Args:
-        lambda_s: Signal wavelength [m] (free variable for the root-finder).
-        lambda_p: Pump wavelength [m].
-        T:        Crystal temperature [°C].
-        G:        Reciprocal lattice vector [rad/m].
+    Parameters
+    ----------
+    lambda_s: float
+        Signal wavelength [m] (free variable for the root-finder).
+    lambda_p: float
+      Pump wavelength [m].
+    T: float
+        Crystal temperature [°C].
+    G: float
+        Reciprocal lattice vector [rad/m].
 
     Returns:
         Wave-vector mismatch [rad/m]; zero at the collinear phase-matching point.
     """
     lambda_i = get_lambda_i(lambda_p, lambda_s)
     kp, ks, ki = wave_vectors(lambda_p, lambda_s, lambda_i, T)
-    return kp - ks - ki - G
+    return kp - ks - ki - m*G
 
 
 # endregion
@@ -571,6 +586,136 @@ def plot_refractive_index(
     fig.savefig(SCRIPT_DIR / "qpm_refractive_index.png")
 
 
+def plot_refractive_index_with_angles(
+    lambda_min: float = LAMBDA_S_MIN,
+    lambda_max: float = LAMBDA_I_MAX,
+    T: float = T,
+    n_points: int = 5000,
+    results: list[dict] = None,
+    ls_collinear: float = None,
+) -> None:
+    """
+    Overlay signal and idler emission angles on the Sellmeier refractive
+    index curve.  Refractive index uses the left y-axis; emission angles
+    share the right y-axis.
+
+    Args:
+        lambda_min:    Start of wavelength sweep [m].
+        lambda_max:    End of wavelength sweep [m].
+        T:             Crystal temperature [°C].
+        n_points:      Number of Sellmeier sample points.
+        results:       Output from run_sweep (with collinear point appended).
+        ls_collinear:  Collinear phase-matching signal wavelength [m].
+    """
+    # ── Sellmeier curve ──────────────────────────────────────────────────
+    lam_sweep = np.linspace(lambda_min, lambda_max, n_points)
+    n_vals = np.array([sellmeier(lam, T) for lam in lam_sweep])
+
+    # ── Angle data from sweep ────────────────────────────────────────────
+    ls_nm = np.array([r["lambda_s"] * 1e9 for r in results])
+    li_nm = np.array([r["lambda_i"] * 1e9 for r in results])
+    ts_deg = np.array([r["theta_s"] for r in results])
+    ti_deg = np.array([r["theta_i"] for r in results])
+
+    li_col_nm = get_lambda_i(LAMBDA_P, ls_collinear) * 1e9
+
+    params = (
+        f"$\\lambda_p = {LAMBDA_P * 1e9:.0f}$ nm\n"
+        f"$\\Lambda = {POLING_PERIOD * 1e6:.1f}\\;\\mu$m\n"
+        f"$T = {T:.0f}\\,^\\circ$C"
+    )
+
+    # ── Figure with twin y-axes ──────────────────────────────────────────
+    fig, ax1 = plt.subplots(figsize=(8.0, 5.0))
+    ax2 = ax1.twinx()
+
+    # ── Left axis: Sellmeier ─────────────────────────────────────────────
+    ln_n = ax1.plot(
+        lam_sweep * 1e9,
+        n_vals,
+        color=C_GREEN,
+        lw=1.6,
+        zorder=3,
+        label=r"$n_e(\lambda)$ — Sellmeier",
+    )
+    ax1.set_xlabel(r"Wavelength $\lambda$ (nm)")
+    ax1.set_ylabel(r"Refractive index $n_e(\lambda)$", color=C_GREEN)
+    ax1.tick_params(axis="y", labelcolor=C_GREEN)
+
+    # ── Right axis: emission angles ──────────────────────────────────────
+    ln_s = ax2.plot(
+        ls_nm,
+        ts_deg,
+        color=C_SIGNAL,
+        lw=1.6,
+        zorder=4,
+        label=r"Signal $\theta_s(\lambda_s)$",
+    )
+    ln_i = ax2.plot(
+        li_nm,
+        ti_deg,
+        color=C_IDLER,
+        lw=1.6,
+        zorder=4,
+        label=r"Idler $\theta_i(\lambda_i)$",
+    )
+
+    # Collinear markers on the angle axis
+    ax2.scatter(
+        ls_collinear * 1e9,
+        0,
+        color=C_MARK,
+        edgecolors=C_SIGNAL,
+        linewidths=0.9,
+        s=55,
+        zorder=6,
+    )
+    ax2.scatter(
+        li_col_nm,
+        0,
+        color=C_MARK,
+        edgecolors=C_IDLER,
+        linewidths=0.9,
+        s=55,
+        zorder=6,
+    )
+
+    ax2.set_ylabel(r"Emission angle (°)", color="0.25")
+    ax2.tick_params(axis="y", labelcolor="0.25")
+
+    # Minor ticks on right axis (rcParams only sets the left by default)
+    ax2.yaxis.set_minor_locator(plt.AutoLocator().__class__())
+    from matplotlib.ticker import AutoMinorLocator
+
+    ax2.yaxis.set_minor_locator(AutoMinorLocator())
+    ax2.tick_params(
+        axis="y", which="minor", right=True, width=0.5, length=2, direction="in"
+    )
+    ax2.tick_params(
+        axis="y", which="major", right=True, width=0.8, length=4, direction="in"
+    )
+
+    # ── Pump wavelength reference line ───────────────────────────────────
+    ax1.axvline(LAMBDA_P * 1e9, color=C_SIGNAL, lw=0.7, ls=":", zorder=2)
+    ax1.axvline(li_col_nm, color=C_IDLER, lw=0.7, ls=":", zorder=2)
+
+    # ── Legend (combine all line handles) ────────────────────────────────
+    lines = ln_n + ln_s + ln_i
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc="lower center", fontsize=9)
+
+    # ── Parameter box ────────────────────────────────────────────────────
+    param_box(ax1, params, loc="lower right")
+
+    ax1.set_title(
+        r"Sellmeier Index \& QPM Emission Angles — MgO:LiTaO$_3$"
+        + f"  ($T = {T:.0f}\\,^\\circ$C)"
+    )
+    ax1.set_xlim(lam_sweep[0] * 1e9 - 50, lam_sweep[-1] * 1e9 + 50)
+    fig.tight_layout()
+    fig.savefig(SCRIPT_DIR / "qpm_overlay.png")
+
+
 # endregion
 
 
@@ -675,7 +820,7 @@ def verify_energy_conservation_sweep(
 # endregion
 
 
-# region ------- Main -------
+# region ------- Main, includes the collinear calculation -------
 
 
 def main() -> None:
@@ -734,20 +879,7 @@ def main() -> None:
         f"signal: {ls_collinear * 1e9:.2f} nm, "
         f"idler: {li_collinear * 1e9:.2f} nm"
     )
-
-    plot_results(results, ls_collinear)
-    # plt.show()
-
-    # region ------ uncomment this to run a energy conservation check & plot the refractive index ------
-    print("\n--- Spot-check at collinear phase-matching point ---")
-    verify_energy_conservation(LAMBDA_P, ls_collinear, li_collinear)
-
-    print("\n--- Spot-check at θ_s = 1° ---")
-    verify_energy_conservation(LAMBDA_P, closest["lambda_s"], closest["lambda_i"])
-
-    print("\n--- Full sweep verification ---")
-    verify_energy_conservation_sweep(results)
-    plot_refractive_index()
+    plot_refractive_index_with_angles(results=results, ls_collinear=ls_collinear)
     # endregion
 
 
